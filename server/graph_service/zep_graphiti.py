@@ -14,9 +14,28 @@ from graph_service.dto import FactResult
 logger = logging.getLogger(__name__)
 
 
+def create_graph_driver(uri: str, user: str, password: str):
+    """Create appropriate graph driver based on URI scheme."""
+    if uri.startswith('falkordb://'):
+        from graphiti_core.driver.falkordb_driver import FalkorDriver
+        # Extract host and port from URI
+        host_port = uri.replace('falkordb://', '').split('/')[0]
+        parts = host_port.split(':')
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 6379
+        logger.info(f'Creating FalkorDriver for {host}:{port} (no auth)')
+        # FalkorDB typically doesn't use authentication, so don't pass credentials
+        return FalkorDriver(host=host, port=port)
+    else:
+        from graphiti_core.driver.neo4j_driver import Neo4jDriver
+        logger.info(f'Creating Neo4jDriver for {uri}')
+        return Neo4jDriver(uri, user, password)
+
+
 class ZepGraphiti(Graphiti):
     def __init__(self, uri: str, user: str, password: str, llm_client: LLMClient | None = None):
-        super().__init__(uri, user, password, llm_client)
+        driver = create_graph_driver(uri, user, password)
+        super().__init__(uri=None, user=None, password=None, llm_client=llm_client, graph_driver=driver)
 
     async def save_entity_node(self, name: str, uuid: str, group_id: str, summary: str = ''):
         new_node = EntityNode(

@@ -37,28 +37,24 @@ RUN groupadd -r app && useradd -r -d /app -g app app
 
 # Set up the server application first
 WORKDIR /app
+
+# Copy graphiti-core source with local modifications
+COPY ./graphiti_core ./graphiti_core
+COPY ./pyproject.toml ./README.md ./
+
+# Copy server files
 COPY ./server/pyproject.toml ./server/README.md ./server/uv.lock ./
 COPY ./server/graph_service ./graph_service
 
-# Install server dependencies (without graphiti-core from lockfile)
-# Then install graphiti-core from PyPI at the desired version
-# This prevents the stale lockfile from pinning an old graphiti-core version
+# Install graphiti-core from local source first, then server dependencies
 ARG INSTALL_FALKORDB=false
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev && \
-    if [ -n "$GRAPHITI_VERSION" ]; then \
-        if [ "$INSTALL_FALKORDB" = "true" ]; then \
-            uv pip install --system --upgrade "graphiti-core[falkordb]==$GRAPHITI_VERSION"; \
-        else \
-            uv pip install --system --upgrade "graphiti-core==$GRAPHITI_VERSION"; \
-        fi; \
+    if [ "$INSTALL_FALKORDB" = "true" ]; then \
+        uv pip install --system -e ".[falkordb]"; \
     else \
-        if [ "$INSTALL_FALKORDB" = "true" ]; then \
-            uv pip install --system --upgrade "graphiti-core[falkordb]"; \
-        else \
-            uv pip install --system --upgrade graphiti-core; \
-        fi; \
-    fi
+        uv pip install --system -e "."; \
+    fi && \
+    cd /app && uv sync --frozen --no-dev
 
 # Change ownership to app user
 RUN chown -R app:app /app
