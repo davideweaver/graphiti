@@ -123,32 +123,55 @@ class ZepGraphiti(Graphiti):
             raise HTTPException(status_code=404, detail=e.message) from e
 
 
-async def get_graphiti(settings: ZepEnvDep):
-    client = ZepGraphiti(
+# Singleton instance - initialized at startup
+_graphiti_instance: ZepGraphiti | None = None
+
+
+async def initialize_graphiti_singleton(settings: ZepEnvDep):
+    """Initialize the singleton Graphiti instance at application startup."""
+    global _graphiti_instance
+
+    if _graphiti_instance is not None:
+        logger.warning('Graphiti singleton already initialized, skipping')
+        return
+
+    logger.info('Initializing Graphiti singleton instance...')
+    _graphiti_instance = ZepGraphiti(
         uri=settings.neo4j_uri,
         user=settings.neo4j_user,
         password=settings.neo4j_password,
     )
+
+    # Apply settings overrides
     if settings.openai_base_url is not None:
-        client.llm_client.config.base_url = settings.openai_base_url
+        _graphiti_instance.llm_client.config.base_url = settings.openai_base_url
     if settings.openai_api_key is not None:
-        client.llm_client.config.api_key = settings.openai_api_key
+        _graphiti_instance.llm_client.config.api_key = settings.openai_api_key
     if settings.model_name is not None:
-        client.llm_client.model = settings.model_name
+        _graphiti_instance.llm_client.model = settings.model_name
 
-    try:
-        yield client
-    finally:
-        await client.close()
+    # Build indices and constraints once at startup
+    logger.info('Building database indices and constraints...')
+    await _graphiti_instance.build_indices_and_constraints()
+    logger.info('Graphiti singleton initialized successfully')
 
 
-async def initialize_graphiti(settings: ZepEnvDep):
-    client = ZepGraphiti(
-        uri=settings.neo4j_uri,
-        user=settings.neo4j_user,
-        password=settings.neo4j_password,
-    )
-    await client.build_indices_and_constraints()
+async def close_graphiti_singleton():
+    """Close the singleton Graphiti instance at application shutdown."""
+    global _graphiti_instance
+
+    if _graphiti_instance is not None:
+        logger.info('Closing Graphiti singleton instance...')
+        await _graphiti_instance.close()
+        _graphiti_instance = None
+        logger.info('Graphiti singleton closed')
+
+
+async def get_graphiti(settings: ZepEnvDep):
+    """Dependency that returns the singleton Graphiti instance."""
+    if _graphiti_instance is None:
+        raise RuntimeError('Graphiti singleton not initialized. Call initialize_graphiti_singleton() at startup.')
+    yield _graphiti_instance
 
 
 def get_fact_result_from_edge(edge: EntityEdge):
