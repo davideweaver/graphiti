@@ -46,6 +46,7 @@ class ZepGraphiti(Graphiti):
                 api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
                 model=os.getenv("OPENAI_MODEL", "meta-llama-3.1-8b-instruct-q4_k_m"),
                 base_url=os.getenv("OPENAI_BASE_URL", "http://172.16.0.114:9002/v1"),
+                timeout=float(os.getenv("LLM_TIMEOUT", "120.0")),  # Timeout in seconds for LLM inference
             )
             llm_client = OpenAIGenericClient(config=llm_config, max_tokens=16384)
             logger.info(f'Using OpenAIGenericClient with base_url={llm_config.base_url}, model={llm_config.model}')
@@ -59,6 +60,7 @@ class ZepGraphiti(Graphiti):
                 embedding_model=os.getenv("EMBEDDING_MODEL", "nomic-embed-text-v1.5.Q8_0"),
                 embedding_dim=int(os.getenv("EMBEDDING_DIM", "768")),
                 base_url=os.getenv("EMBEDDING_BASE_URL", "http://172.16.0.114:9003/v1"),
+                timeout=float(os.getenv("EMBEDDING_TIMEOUT", "60.0")),  # Timeout in seconds for embeddings
             )
         )
         logger.info(f'Using local embedder: {embedder.config.embedding_model} ({embedder.config.embedding_dim}d) at {embedder.config.base_url}')
