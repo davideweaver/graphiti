@@ -46,23 +46,26 @@ class ZepGraphiti(Graphiti):
                 api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
                 model=os.getenv("OPENAI_MODEL", "meta-llama-3.1-8b-instruct-q4_k_m"),
                 base_url=os.getenv("OPENAI_BASE_URL", "http://172.16.0.114:9002/v1"),
-                timeout=float(os.getenv("LLM_TIMEOUT", "120.0")),  # Timeout in seconds for LLM inference
             )
+            # Set timeout for local LLM inference (default: 120 seconds)
+            timeout = float(os.getenv("LLM_TIMEOUT", "120.0"))
             llm_client = OpenAIGenericClient(config=llm_config, max_tokens=16384)
+            llm_client.client.timeout = timeout
             logger.info(f'Using OpenAIGenericClient with base_url={llm_config.base_url}, model={llm_config.model}')
 
         # Configure local embedder using dedicated llama.cpp embedding server
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
-        embedder = OpenAIEmbedder(
-            config=OpenAIEmbedderConfig(
-                api_key="not-needed",
-                embedding_model=os.getenv("EMBEDDING_MODEL", "nomic-embed-text-v1.5.Q8_0"),
-                embedding_dim=int(os.getenv("EMBEDDING_DIM", "768")),
-                base_url=os.getenv("EMBEDDING_BASE_URL", "http://172.16.0.114:9003/v1"),
-                timeout=float(os.getenv("EMBEDDING_TIMEOUT", "60.0")),  # Timeout in seconds for embeddings
-            )
+        embedder_config = OpenAIEmbedderConfig(
+            api_key="not-needed",
+            embedding_model=os.getenv("EMBEDDING_MODEL", "nomic-embed-text-v1.5.Q8_0"),
+            embedding_dim=int(os.getenv("EMBEDDING_DIM", "768")),
+            base_url=os.getenv("EMBEDDING_BASE_URL", "http://172.16.0.114:9003/v1"),
         )
+        # Set timeout for local embedding inference (default: 60 seconds)
+        embedding_timeout = float(os.getenv("EMBEDDING_TIMEOUT", "60.0"))
+        embedder = OpenAIEmbedder(config=embedder_config)
+        embedder.client.timeout = embedding_timeout
         logger.info(f'Using local embedder: {embedder.config.embedding_model} ({embedder.config.embedding_dim}d) at {embedder.config.base_url}')
 
         super().__init__(uri=None, user=None, password=None, llm_client=llm_client, embedder=embedder, graph_driver=driver)
