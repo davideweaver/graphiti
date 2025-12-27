@@ -7,6 +7,7 @@ from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
 from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
+from graph_service.entity_types import ENTITY_TYPES
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
@@ -62,6 +63,7 @@ async def add_messages(
             reference_time=m.timestamp,
             source=EpisodeType.message,
             source_description=m.source_description,
+            entity_types=ENTITY_TYPES,
         )
 
     for m in request.messages:
