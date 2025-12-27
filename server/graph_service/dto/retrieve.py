@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -43,3 +44,23 @@ class GetMemoryRequest(BaseModel):
 
 class GetMemoryResponse(BaseModel):
     facts: list[FactResult] = Field(..., description='The facts that were retrieved from the graph')
+
+
+class EntityNodeResponse(BaseModel):
+    uuid: str
+    name: str
+    group_id: str
+    summary: str
+    labels: list[str]
+    attributes: dict[str, Any]
+    created_at: datetime
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
+class EntityListResponse(BaseModel):
+    entities: list[EntityNodeResponse]
+    total: int
+    has_more: bool
+    cursor: str | None = None

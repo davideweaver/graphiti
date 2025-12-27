@@ -10,12 +10,12 @@ from graphiti_core.llm_client import LLMClient  # type: ignore
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
 from graph_service.config import ZepEnvDep
-from graph_service.dto import FactResult
+from graph_service.dto import EntityNodeResponse, FactResult
 
 logger = logging.getLogger(__name__)
 
 
-def create_graph_driver(uri: str, user: str, password: str):
+def create_graph_driver(uri: str, user: str, password: str, database: str = 'dave-weaver'):
     """Create appropriate graph driver based on URI scheme."""
     if uri.startswith('falkordb://'):
         from graphiti_core.driver.falkordb_driver import FalkorDriver
@@ -24,9 +24,9 @@ def create_graph_driver(uri: str, user: str, password: str):
         parts = host_port.split(':')
         host = parts[0]
         port = int(parts[1]) if len(parts) > 1 else 6379
-        logger.info(f'Creating FalkorDriver for {host}:{port} (no auth)')
+        logger.info(f'Creating FalkorDriver for {host}:{port} using graph "{database}" (no auth)')
         # FalkorDB typically doesn't use authentication, so don't pass credentials
-        return FalkorDriver(host=host, port=port)
+        return FalkorDriver(host=host, port=port, database=database)
     else:
         from graphiti_core.driver.neo4j_driver import Neo4jDriver
         logger.info(f'Creating Neo4jDriver for {uri}')
@@ -34,8 +34,8 @@ def create_graph_driver(uri: str, user: str, password: str):
 
 
 class ZepGraphiti(Graphiti):
-    def __init__(self, uri: str, user: str, password: str, llm_client: LLMClient | None = None):
-        driver = create_graph_driver(uri, user, password)
+    def __init__(self, uri: str, user: str, password: str, llm_client: LLMClient | None = None, database: str = 'dave-weaver'):
+        driver = create_graph_driver(uri, user, password, database=database)
 
         # Use OpenAIGenericClient for llama.cpp/Ollama compatibility if not provided
         if llm_client is None:
@@ -135,11 +135,14 @@ async def initialize_graphiti_singleton(settings: ZepEnvDep):
         logger.warning('Graphiti singleton already initialized, skipping')
         return
 
-    logger.info('Initializing Graphiti singleton instance...')
+    # Get graph/database name from environment (defaults to 'dave-weaver')
+    database = os.getenv('GRAPH_NAME', 'dave-weaver')
+    logger.info(f'Initializing Graphiti singleton instance for graph "{database}"...')
     _graphiti_instance = ZepGraphiti(
         uri=settings.neo4j_uri,
         user=settings.neo4j_user,
         password=settings.neo4j_password,
+        database=database,
     )
 
     # Apply settings overrides
@@ -183,6 +186,18 @@ def get_fact_result_from_edge(edge: EntityEdge):
         invalid_at=edge.invalid_at,
         created_at=edge.created_at,
         expired_at=edge.expired_at,
+    )
+
+
+def get_entity_node_response(node: EntityNode):
+    return EntityNodeResponse(
+        uuid=node.uuid,
+        name=node.name,
+        group_id=node.group_id,
+        summary=node.summary,
+        labels=node.labels,
+        attributes=node.attributes,
+        created_at=node.created_at,
     )
 
 

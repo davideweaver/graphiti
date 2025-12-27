@@ -131,6 +131,25 @@ class Topic(BaseModel):
     ...
 
 
+class Person(BaseModel):
+    """A Person represents an individual human being.
+
+    IMPORTANT: Prioritize this classification for individual names over Organization, Location, or other types.
+
+    Instructions for identifying and extracting people:
+    1. Look for individual names (first name, last name, full names)
+    2. Identify people by their roles or titles (CEO, engineer, doctor, teacher)
+    3. Extract nicknames, aliases, or informal names when clearly referring to individuals
+    4. Capture family relationships (spouse, parent, child, sibling)
+    5. Include professional relationships (colleague, manager, employee)
+    6. Note personal attributes when mentioned (age, occupation, location)
+    7. Extract both common names (John Smith) and unique names (Sarah Johnson)
+    8. Distinguish individuals from companies/organizations (Dave Weaver vs ServiceTitan)
+    """
+
+    ...
+
+
 class Organization(BaseModel):
     """An Organization represents a company, institution, group, or formal entity.
 
@@ -164,6 +183,7 @@ class Document(BaseModel):
 
 
 ENTITY_TYPES: dict[str, BaseModel] = {
+    'Person': Person,  # type: ignore
     'Requirement': Requirement,  # type: ignore
     'Preference': Preference,  # type: ignore
     'Procedure': Procedure,  # type: ignore
