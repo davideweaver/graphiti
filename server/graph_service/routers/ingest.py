@@ -17,13 +17,30 @@ class AsyncWorker:
         self.task = None
 
     async def worker(self):
+        print('[AsyncWorker] Worker loop started')
         while True:
             try:
-                print(f'Got a job: (size of remaining queue: {self.queue.qsize()})')
+                print(f'[AsyncWorker] Waiting for job... (queue size: {self.queue.qsize()})')
                 job = await self.queue.get()
-                await job()
+                print(f'[AsyncWorker] Got a job! Executing... (remaining: {self.queue.qsize()})')
+                try:
+                    await job()
+                    print('[AsyncWorker] Job completed successfully')
+                except Exception as e:
+                    print(f'[AsyncWorker] ERROR in job execution: {type(e).__name__}: {e}')
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    self.queue.task_done()
             except asyncio.CancelledError:
+                print('[AsyncWorker] Worker loop cancelled, exiting')
                 break
+            except Exception as e:
+                print(f'[AsyncWorker] FATAL ERROR in worker loop: {type(e).__name__}: {e}')
+                import traceback
+                traceback.print_exc()
+                break
+        print('[AsyncWorker] Worker loop exited')
 
     async def start(self):
         self.task = asyncio.create_task(self.worker())
@@ -54,7 +71,10 @@ async def add_messages(
     request: AddMessagesRequest,
     graphiti: ZepGraphitiDep,
 ):
+    print(f'[POST /messages] Received {len(request.messages)} message(s) for group_id={request.group_id}')
+
     async def add_messages_task(m: Message):
+        print(f'[Task] Processing message: uuid={m.uuid}, role={m.role_type}')
         await graphiti.add_episode(
             uuid=m.uuid,
             group_id=request.group_id,
@@ -65,9 +85,11 @@ async def add_messages(
             source_description=m.source_description,
             entity_types=ENTITY_TYPES,
         )
+        print(f'[Task] Message processed: uuid={m.uuid}')
 
     for m in request.messages:
         await async_worker.queue.put(partial(add_messages_task, m))
+        print(f'[POST /messages] Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})')
 
     return Result(message='Messages added to processing queue', success=True)
 
