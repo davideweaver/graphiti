@@ -1,8 +1,7 @@
 import asyncio
-from contextlib import asynccontextmanager
 from functools import partial
 
-from fastapi import APIRouter, FastAPI, status
+from fastapi import APIRouter, status
 from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
@@ -24,8 +23,11 @@ class AsyncWorker:
                 job = await self.queue.get()
                 print(f'[AsyncWorker] Got a job! Executing... (remaining: {self.queue.qsize()})')
                 try:
-                    await job()
+                    # Add 60s timeout to prevent jobs from hanging indefinitely
+                    await asyncio.wait_for(job(), timeout=60.0)
                     print('[AsyncWorker] Job completed successfully')
+                except asyncio.TimeoutError:
+                    print('[AsyncWorker] ERROR: Job timed out after 60 seconds')
                 except Exception as e:
                     print(f'[AsyncWorker] ERROR in job execution: {type(e).__name__}: {e}')
                     import traceback
@@ -56,14 +58,7 @@ class AsyncWorker:
 async_worker = AsyncWorker()
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    await async_worker.start()
-    yield
-    await async_worker.stop()
-
-
-router = APIRouter(lifespan=lifespan)
+router = APIRouter()
 
 
 @router.post('/messages', status_code=status.HTTP_202_ACCEPTED)
@@ -75,16 +70,22 @@ async def add_messages(
 
     async def add_messages_task(m: Message):
         print(f'[Task] Processing message: uuid={m.uuid}, role={m.role_type}')
-        await graphiti.add_episode(
-            uuid=m.uuid,
-            group_id=request.group_id,
-            name=m.name,
-            episode_body=f'[{m.role_type}]: {m.content}',
-            reference_time=m.timestamp,
-            source=EpisodeType.message,
-            source_description=m.source_description,
-            entity_types=ENTITY_TYPES,
-        )
+        print(f'[Task] Calling graphiti.add_episode() with group_id={request.group_id}')
+        try:
+            await graphiti.add_episode(
+                uuid=m.uuid,
+                group_id=request.group_id,
+                name=m.name,
+                episode_body=f'[{m.role_type}]: {m.content}',
+                reference_time=m.timestamp,
+                source=EpisodeType.message,
+                source_description=m.source_description,
+                entity_types=ENTITY_TYPES,
+            )
+            print(f'[Task] add_episode() completed successfully')
+        except Exception as e:
+            print(f'[Task] add_episode() raised exception: {type(e).__name__}: {e}')
+            raise
         print(f'[Task] Message processed: uuid={m.uuid}')
 
     for m in request.messages:
