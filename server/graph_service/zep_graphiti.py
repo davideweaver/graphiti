@@ -18,15 +18,24 @@ logger = logging.getLogger(__name__)
 def create_graph_driver(uri: str, user: str, password: str, database: str = 'dave-weaver'):
     """Create appropriate graph driver based on URI scheme."""
     if uri.startswith('falkordb://'):
+        from falkordb.asyncio import FalkorDB
         from graphiti_core.driver.falkordb_driver import FalkorDriver
         # Extract host and port from URI
         host_port = uri.replace('falkordb://', '').split('/')[0]
         parts = host_port.split(':')
         host = parts[0]
         port = int(parts[1]) if len(parts) > 1 else 6379
-        logger.info(f'Creating FalkorDriver for {host}:{port} using graph "{database}" (no auth)')
-        # FalkorDB typically doesn't use authentication, so don't pass credentials
-        return FalkorDriver(host=host, port=port, database=database)
+        logger.info(f'Creating FalkorDriver for {host}:{port} using graph "{database}" with timeouts')
+        # Create FalkorDB client with timeout configuration
+        falkor_client = FalkorDB(
+            host=host,
+            port=port,
+            username=user if user != 'default' else None,
+            password=password if password != 'password' else None,
+            socket_timeout=30.0,           # 30s timeout for operations
+            socket_connect_timeout=10.0,   # 10s timeout for connection
+        )
+        return FalkorDriver(host=host, port=port, database=database, falkor_db=falkor_client)
     else:
         from graphiti_core.driver.neo4j_driver import Neo4jDriver
         logger.info(f'Creating Neo4jDriver for {uri}')
