@@ -11,6 +11,7 @@ from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
 from graph_service.config import ZepEnvDep
 from graph_service.dto import EntityNodeResponse, FactResult
+from graph_service.events import get_event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,21 @@ class ZepGraphiti(Graphiti):
         )
         await new_node.generate_name_embedding(self.embedder)
         await new_node.save(self.driver)
+
+        # Emit event for WebSocket notifications
+        event_bus = get_event_bus()
+        await event_bus.publish(
+            event_type='entity.created',
+            group_id=group_id,
+            data={
+                'uuid': uuid,
+                'name': name,
+                'summary': summary,
+                'labels': new_node.labels,
+                'created_at': new_node.created_at.isoformat(),
+            },
+        )
+
         return new_node
 
     async def get_entity_edge(self, uuid: str):
@@ -117,19 +133,74 @@ class ZepGraphiti(Graphiti):
         for episode in episodes:
             await episode.delete(self.driver)
 
+        # Emit event for WebSocket notifications
+        event_bus = get_event_bus()
+        await event_bus.publish(
+            event_type='group.deleted',
+            group_id=group_id,
+            data={
+                'deleted_edges': len(edges),
+                'deleted_nodes': len(nodes),
+                'deleted_episodes': len(episodes),
+            },
+        )
+
     async def delete_entity_edge(self, uuid: str):
         try:
             edge = await EntityEdge.get_by_uuid(self.driver, uuid)
+            group_id = edge.group_id  # Capture before delete
             await edge.delete(self.driver)
+
+            # Emit event for WebSocket notifications
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                event_type='edge.deleted',
+                group_id=group_id,
+                data={'uuid': uuid},
+            )
         except EdgeNotFoundError as e:
             raise HTTPException(status_code=404, detail=e.message) from e
 
     async def delete_episodic_node(self, uuid: str):
         try:
             episode = await EpisodicNode.get_by_uuid(self.driver, uuid)
+            group_id = episode.group_id  # Capture before delete
             await episode.delete(self.driver)
+
+            # Emit event for WebSocket notifications
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                event_type='episode.deleted',
+                group_id=group_id,
+                data={'uuid': uuid},
+            )
         except NodeNotFoundError as e:
             raise HTTPException(status_code=404, detail=e.message) from e
+
+    async def add_episode_with_events(self, **kwargs):
+        """
+        Wrapper around add_episode that emits events for created entities/edges.
+
+        This method ensures WebSocket notifications are sent after the async worker
+        completes processing of episodic memories.
+        """
+        group_id = kwargs['group_id']
+
+        # Call parent method
+        results = await self.add_episode(**kwargs)
+
+        # Emit event for created episode
+        event_bus = get_event_bus()
+        await event_bus.publish(
+            event_type='episode.created',
+            group_id=group_id,
+            data={
+                'uuid': kwargs.get('uuid'),
+                'name': kwargs.get('name', ''),
+            },
+        )
+
+        return results
 
 
 # Singleton instance - initialized at startup

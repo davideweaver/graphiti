@@ -72,9 +72,9 @@ async def add_messages(
 
     async def add_messages_task(m: Message):
         logger.debug(f'Task - Processing message: uuid={m.uuid}, role={m.role_type}')
-        logger.debug(f'Task - Calling graphiti.add_episode() with group_id={request.group_id}')
+        logger.debug(f'Task - Calling graphiti.add_episode_with_events() with group_id={request.group_id}')
         try:
-            await graphiti.add_episode(
+            await graphiti.add_episode_with_events(
                 uuid=m.uuid,
                 group_id=request.group_id,
                 name=m.name,
@@ -84,7 +84,7 @@ async def add_messages(
                 source_description=m.source_description,
                 entity_types=ENTITY_TYPES,
             )
-            logger.debug('Task - add_episode() completed successfully')
+            logger.debug('Task - add_episode_with_events() completed successfully')
         except Exception as e:
             logger.error(f'Task - add_episode() raised exception: {type(e).__name__}: {e}')
             raise
