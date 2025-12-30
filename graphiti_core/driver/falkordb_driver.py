@@ -270,7 +270,7 @@ class FalkorDriver(GraphDriver):
             await self.execute_query('MATCH (n) RETURN 1 LIMIT 1')
             return None
         except Exception as e:
-            print(f'FalkorDB health check failed: {e}')
+            logger.error(f'FalkorDB health check failed: {e}')
             raise
 
     @staticmethod

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from functools import partial
 
 from fastapi import APIRouter, status
@@ -10,37 +11,40 @@ from graph_service.entity_types import ENTITY_TYPES
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
+logger = logging.getLogger(__name__)
+
+
 class AsyncWorker:
     def __init__(self):
         self.queue = asyncio.Queue()
         self.task = None
 
     async def worker(self):
-        print('[AsyncWorker] Worker loop started')
+        logger.debug('AsyncWorker - Worker loop started')
         while True:
             try:
-                print(f'[AsyncWorker] Waiting for job... (queue size: {self.queue.qsize()})')
+                logger.debug(f'AsyncWorker - Waiting for job... (queue size: {self.queue.qsize()})')
                 job = await self.queue.get()
-                print(f'[AsyncWorker] Got a job! Executing... (remaining: {self.queue.qsize()})')
+                logger.debug(f'Got a job: (size of remaining queue: {self.queue.qsize()})')
                 try:
                     # Let LLM_TIMEOUT and EMBEDDING_TIMEOUT handle timeouts
                     await job()
-                    print('[AsyncWorker] Job completed successfully')
+                    logger.debug('AsyncWorker - Job completed successfully')
                 except Exception as e:
-                    print(f'[AsyncWorker] ERROR in job execution: {type(e).__name__}: {e}')
+                    logger.error(f'AsyncWorker - ERROR in job execution: {type(e).__name__}: {e}')
                     import traceback
                     traceback.print_exc()
                 finally:
                     self.queue.task_done()
             except asyncio.CancelledError:
-                print('[AsyncWorker] Worker loop cancelled, exiting')
+                logger.debug('AsyncWorker - Worker loop cancelled, exiting')
                 break
             except Exception as e:
-                print(f'[AsyncWorker] FATAL ERROR in worker loop: {type(e).__name__}: {e}')
+                logger.error(f'AsyncWorker - FATAL ERROR in worker loop: {type(e).__name__}: {e}')
                 import traceback
                 traceback.print_exc()
                 break
-        print('[AsyncWorker] Worker loop exited')
+        logger.debug('AsyncWorker - Worker loop exited')
 
     async def start(self):
         self.task = asyncio.create_task(self.worker())
@@ -64,11 +68,11 @@ async def add_messages(
     request: AddMessagesRequest,
     graphiti: ZepGraphitiDep,
 ):
-    print(f'[POST /messages] Received {len(request.messages)} message(s) for group_id={request.group_id}')
+    logger.debug(f'POST /messages - Received {len(request.messages)} message(s) for group_id={request.group_id}')
 
     async def add_messages_task(m: Message):
-        print(f'[Task] Processing message: uuid={m.uuid}, role={m.role_type}')
-        print(f'[Task] Calling graphiti.add_episode() with group_id={request.group_id}')
+        logger.debug(f'Task - Processing message: uuid={m.uuid}, role={m.role_type}')
+        logger.debug(f'Task - Calling graphiti.add_episode() with group_id={request.group_id}')
         try:
             await graphiti.add_episode(
                 uuid=m.uuid,
@@ -80,15 +84,15 @@ async def add_messages(
                 source_description=m.source_description,
                 entity_types=ENTITY_TYPES,
             )
-            print(f'[Task] add_episode() completed successfully')
+            logger.debug('Task - add_episode() completed successfully')
         except Exception as e:
-            print(f'[Task] add_episode() raised exception: {type(e).__name__}: {e}')
+            logger.error(f'Task - add_episode() raised exception: {type(e).__name__}: {e}')
             raise
-        print(f'[Task] Message processed: uuid={m.uuid}')
+        logger.debug(f'Task - Message processed: uuid={m.uuid}')
 
     for m in request.messages:
         await async_worker.queue.put(partial(add_messages_task, m))
-        print(f'[POST /messages] Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})')
+        logger.debug(f'POST /messages - Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})')
 
     return Result(message='Messages added to processing queue', success=True)
 
