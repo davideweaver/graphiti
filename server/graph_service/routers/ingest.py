@@ -23,11 +23,9 @@ class AsyncWorker:
                 job = await self.queue.get()
                 print(f'[AsyncWorker] Got a job! Executing... (remaining: {self.queue.qsize()})')
                 try:
-                    # Add 60s timeout to prevent jobs from hanging indefinitely
-                    await asyncio.wait_for(job(), timeout=60.0)
+                    # Let LLM_TIMEOUT and EMBEDDING_TIMEOUT handle timeouts
+                    await job()
                     print('[AsyncWorker] Job completed successfully')
-                except asyncio.TimeoutError:
-                    print('[AsyncWorker] ERROR: Job timed out after 60 seconds')
                 except Exception as e:
                     print(f'[AsyncWorker] ERROR in job execution: {type(e).__name__}: {e}')
                     import traceback
