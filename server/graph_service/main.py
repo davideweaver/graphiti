@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,6 +13,25 @@ from graph_service.websocket import get_ws_manager, router as websocket_router
 from graph_service.zep_graphiti import close_graphiti_singleton, initialize_graphiti_singleton
 
 
+logger = logging.getLogger(__name__)
+
+
+async def periodic_queue_status_broadcaster():
+    """
+    Periodically broadcast queue status to all WebSocket clients.
+
+    Runs every 10 seconds to keep clients informed of processing status.
+    """
+    logger.info('Starting periodic queue status broadcaster')
+    try:
+        while True:
+            await asyncio.sleep(10)  # Wait 10 seconds between broadcasts
+            await async_worker.emit_queue_status()
+    except asyncio.CancelledError:
+        logger.info('Periodic queue status broadcaster stopped')
+        raise
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Startup: Initialize singleton Graphiti instance
@@ -22,7 +43,15 @@ async def lifespan(_: FastAPI):
     event_bus = get_event_bus()
     ws_manager = get_ws_manager()
     await event_bus.subscribe(ws_manager.handle_graph_event)
+    # Startup: Start periodic queue status broadcaster
+    queue_broadcaster_task = asyncio.create_task(periodic_queue_status_broadcaster())
     yield
+    # Shutdown: Stop periodic queue status broadcaster
+    queue_broadcaster_task.cancel()
+    try:
+        await queue_broadcaster_task
+    except asyncio.CancelledError:
+        pass
     # Shutdown: Unsubscribe WebSocketManager
     await event_bus.unsubscribe(ws_manager.handle_graph_event)
     # Shutdown: Stop async worker

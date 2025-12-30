@@ -8,6 +8,7 @@ from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # 
 
 from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
 from graph_service.entity_types import ENTITY_TYPES
+from graph_service.events import get_event_bus
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
@@ -18,6 +19,20 @@ class AsyncWorker:
     def __init__(self):
         self.queue = asyncio.Queue()
         self.task = None
+
+    async def emit_queue_status(self):
+        """Emit queue status event to all WebSocket clients."""
+        queue_size = self.queue.qsize()
+        event_bus = get_event_bus()
+        # Broadcast to all groups (group_id='*' is a special broadcast group)
+        await event_bus.publish(
+            event_type='queue.status',
+            group_id='*',  # Broadcast to all connected clients
+            data={
+                'queue_size': queue_size,
+                'is_processing': queue_size > 0,
+            },
+        )
 
     async def worker(self):
         logger.debug('AsyncWorker - Worker loop started')
@@ -36,6 +51,8 @@ class AsyncWorker:
                     traceback.print_exc()
                 finally:
                     self.queue.task_done()
+                    # Emit queue status after job completes
+                    await self.emit_queue_status()
             except asyncio.CancelledError:
                 logger.debug('AsyncWorker - Worker loop cancelled, exiting')
                 break
@@ -93,6 +110,9 @@ async def add_messages(
     for m in request.messages:
         await async_worker.queue.put(partial(add_messages_task, m))
         logger.debug(f'POST /messages - Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})')
+
+    # Emit queue status after adding jobs
+    await async_worker.emit_queue_status()
 
     return Result(message='Messages added to processing queue', success=True)
 

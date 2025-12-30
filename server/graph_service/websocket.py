@@ -68,15 +68,56 @@ class WebSocketManager:
         for websocket in dead_connections:
             await self.disconnect(websocket, group_id)
 
+    async def broadcast_to_all(self, message: str) -> None:
+        """
+        Broadcast a message to all connected clients regardless of group.
+
+        Used for global events like queue status updates.
+        """
+        total_connections = sum(len(conns) for conns in self.active_connections.values())
+        if total_connections == 0:
+            logger.debug('No active connections, skipping broadcast')
+            return
+
+        logger.debug(f'Broadcasting to all groups: {total_connections} connection(s) across {len(self.active_connections)} group(s)')
+
+        # Track dead connections by group
+        dead_by_group: dict[str, set[WebSocket]] = defaultdict(set)
+
+        for group_id, connections in self.active_connections.items():
+            for websocket in connections:
+                try:
+                    await websocket.send_text(message)
+                except Exception as e:
+                    logger.warning(
+                        f'Failed to send to WebSocket in group {group_id}: {type(e).__name__}: {e}'
+                    )
+                    dead_by_group[group_id].add(websocket)
+
+        # Remove dead connections
+        for group_id, dead_connections in dead_by_group.items():
+            for websocket in dead_connections:
+                await self.disconnect(websocket, group_id)
+
     async def handle_graph_event(self, event: GraphEvent) -> None:
         """
         EventBus callback: convert event to JSON and broadcast to group.
 
         This method is registered as a subscriber with the EventBus and
         receives all graph modification events.
+
+        Special handling:
+        - group_id='*' broadcasts to all connected clients
+        - Otherwise broadcasts only to the specified group
         """
         message = json.dumps(event.to_dict())
-        await self.broadcast_to_group(event.group_id, message)
+
+        if event.group_id == '*':
+            # Broadcast to all connected clients
+            await self.broadcast_to_all(message)
+        else:
+            # Broadcast only to specific group
+            await self.broadcast_to_group(event.group_id, message)
 
 
 # Singleton instance
