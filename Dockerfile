@@ -46,6 +46,9 @@ COPY ./pyproject.toml ./README.md ./
 COPY ./server/pyproject.toml ./server/README.md ./server/uv.lock ./
 COPY ./server/graph_service ./graph_service
 
+# Copy entrypoint script
+COPY ./server/entrypoint.sh /app/entrypoint.sh
+
 # Install graphiti-core from local source first, then server dependencies
 ARG INSTALL_FALKORDB=false
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -57,11 +60,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     cd /app && uv sync --frozen --no-dev
 
 # Change ownership to app user
-RUN chown -R app:app /app
+RUN chown -R app:app /app && chmod +x /app/entrypoint.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    LOG_LEVEL=INFO
 
 # Switch to non-root user
 USER app
@@ -70,5 +74,5 @@ USER app
 ENV PORT=8000
 EXPOSE $PORT
 
-# Use uv run for execution
-CMD ["uv", "run", "uvicorn", "graph_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use entrypoint script for execution
+ENTRYPOINT ["/app/entrypoint.sh"]
