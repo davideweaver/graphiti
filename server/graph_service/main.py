@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,23 +10,10 @@ from graph_service.events import get_event_bus
 from graph_service.routers import ingest, retrieve
 from graph_service.routers.ingest import async_worker
 from graph_service.websocket import get_ws_manager, router as websocket_router
-from graph_service.zep_graphiti import close_connection_pool, initialize_connection_pool
+from graph_service.zep_graphiti import close_graphiti_singleton, initialize_graphiti_singleton
 
-
-# Configure application logging from LOG_LEVEL environment variable
-log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
-log_level = getattr(logging, log_level_name, logging.INFO)
-logging.basicConfig(
-    level=log_level,
-    format='%(levelname)s:     %(name)s - %(message)s',
-    force=True  # Override any existing configuration
-)
-
-# Suppress noisy HTTP request logs from httpx
-logging.getLogger('httpx').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-logger.info(f'Application logging configured with level: {log_level_name}')
 
 
 async def periodic_queue_status_broadcaster():
@@ -48,9 +34,9 @@ async def periodic_queue_status_broadcaster():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Startup: Initialize connection pool with shared LLM/embedder
+    # Startup: Initialize singleton Graphiti instance
     settings = get_settings()
-    await initialize_connection_pool(settings)
+    await initialize_graphiti_singleton(settings)
     # Startup: Start async worker for background job processing
     await async_worker.start()
     # Startup: Register WebSocketManager with EventBus
@@ -70,8 +56,8 @@ async def lifespan(_: FastAPI):
     await event_bus.unsubscribe(ws_manager.handle_graph_event)
     # Shutdown: Stop async worker
     await async_worker.stop()
-    # Shutdown: Close connection pool
-    await close_connection_pool()
+    # Shutdown: Close singleton Graphiti instance
+    await close_graphiti_singleton()
 
 
 app = FastAPI(lifespan=lifespan)

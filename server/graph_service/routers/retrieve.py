@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
 
@@ -13,25 +12,15 @@ from graph_service.dto import (
     SearchQuery,
     SearchResults,
 )
-from graph_service.zep_graphiti import (
-    ZepGraphiti,
-    get_entity_node_response,
-    get_fact_result_from_edge,
-    get_graphiti_from_body,
-    get_graphiti_from_path,
-    get_graphiti_from_query,
-)
+from graph_service.zep_graphiti import ZepGraphitiDep, get_entity_node_response, get_fact_result_from_edge
 
 router = APIRouter()
 
 
 @router.post('/search', status_code=status.HTTP_200_OK)
-async def search(
-    query: SearchQuery,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
-):
+async def search(query: SearchQuery, graphiti: ZepGraphitiDep):
     relevant_edges = await graphiti.search(
-        group_ids=[query.group_id],  # Changed from query.group_ids
+        group_ids=query.group_ids,
         query=query.query,
         num_results=query.max_facts,
     )
@@ -42,21 +31,13 @@ async def search(
 
 
 @router.get('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
-async def get_entity_edge(
-    uuid: str,
-    group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
-):
+async def get_entity_edge(uuid: str, graphiti: ZepGraphitiDep):
     entity_edge = await graphiti.get_entity_edge(uuid)
     return get_fact_result_from_edge(entity_edge)
 
 
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
-async def get_episodes(
-    group_id: str,
-    last_n: int,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
-):
+async def get_episodes(group_id: str, last_n: int, graphiti: ZepGraphitiDep):
     episodes = await graphiti.retrieve_episodes(
         group_ids=[group_id], last_n=last_n, reference_time=datetime.now(timezone.utc)
     )
@@ -66,7 +47,7 @@ async def get_episodes(
 @router.post('/get-memory', status_code=status.HTTP_200_OK)
 async def get_memory(
     request: GetMemoryRequest,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
+    graphiti: ZepGraphitiDep,
 ):
     combined_query = compose_query_from_messages(request.messages)
     result = await graphiti.search(
@@ -86,11 +67,7 @@ def compose_query_from_messages(messages: list[Message]):
 
 
 @router.get('/entities/{uuid}', status_code=status.HTTP_200_OK)
-async def get_entity(
-    uuid: str,
-    group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
-):
+async def get_entity(uuid: str, graphiti: ZepGraphitiDep):
     """Get a single entity node by UUID."""
     try:
         entity = await EntityNode.get_by_uuid(graphiti.driver, uuid)
@@ -105,7 +82,7 @@ async def list_entities(
     limit: int = Query(50, ge=1, le=500, description='Maximum number of entities to return'),
     cursor: str | None = Query(None, description='Pagination cursor (UUID of last entity)'),
     with_embeddings: bool = Query(False, description='Include name embeddings in response'),
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)] = None,
+    graphiti: ZepGraphitiDep = None,
 ):
     """List entities for a group with pagination."""
     entities = await EntityNode.get_by_group_ids(
@@ -127,8 +104,7 @@ async def list_entities(
 @router.post('/entities/by-uuids', status_code=status.HTTP_200_OK)
 async def get_entities_by_uuids(
     uuids: list[str],
-    group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
+    graphiti: ZepGraphitiDep,
 ):
     """Get multiple entities by their UUIDs (batch retrieval)."""
     if not uuids:
@@ -150,11 +126,7 @@ async def get_entities_by_uuids(
 
 
 @router.get('/entities/{uuid}/relationships', status_code=status.HTTP_200_OK)
-async def get_entity_relationships(
-    uuid: str,
-    group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
-):
+async def get_entity_relationships(uuid: str, graphiti: ZepGraphitiDep):
     """Get entities related to this entity via RELATES_TO relationships."""
     # Query for entities with RELATES_TO relationships (both directions)
     query = f"""
