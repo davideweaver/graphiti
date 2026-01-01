@@ -1,15 +1,17 @@
+import asyncio
 import logging
 import os
 from typing import Annotated
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from graphiti_core import Graphiti  # type: ignore
 from graphiti_core.edges import EntityEdge  # type: ignore
+from graphiti_core.embedder import EmbedderClient  # type: ignore
 from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError, NodeNotFoundError
 from graphiti_core.llm_client import LLMClient  # type: ignore
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
-from graph_service.config import ZepEnvDep
+from graph_service.config import Settings, ZepEnvDep
 from graph_service.dto import EntityNodeResponse, FactResult
 from graph_service.events import get_event_bus
 
@@ -203,58 +205,110 @@ class ZepGraphiti(Graphiti):
         return results
 
 
-# Singleton instance - initialized at startup
-_graphiti_instance: ZepGraphiti | None = None
+# Connection pool - maps group_id to Graphiti instance
+_graphiti_pool: dict[str, ZepGraphiti] = {}
+_pool_locks: dict[str, asyncio.Lock] = {}
+_pool_lock = asyncio.Lock()  # Master lock for pool structure
+_settings: Settings | None = None
 
 
-async def initialize_graphiti_singleton(settings: ZepEnvDep):
-    """Initialize the singleton Graphiti instance at application startup."""
-    global _graphiti_instance
+async def initialize_connection_pool(settings: Settings):
+    """Initialize the connection pool (stores settings for instance creation)."""
+    global _settings
 
-    if _graphiti_instance is not None:
-        logger.warning('Graphiti singleton already initialized, skipping')
+    if _settings is not None:
+        logger.warning('Connection pool already initialized, skipping')
         return
 
-    # Get graph/database name from environment (defaults to 'dave-weaver')
-    database = os.getenv('GRAPH_NAME', 'dave-weaver')
-    logger.info(f'Initializing Graphiti singleton instance for graph "{database}"...')
-    _graphiti_instance = ZepGraphiti(
-        uri=settings.neo4j_uri,
-        user=settings.neo4j_user,
-        password=settings.neo4j_password,
-        database=database,
-    )
-
-    # Apply settings overrides
-    if settings.openai_base_url is not None:
-        _graphiti_instance.llm_client.config.base_url = settings.openai_base_url
-    if settings.openai_api_key is not None:
-        _graphiti_instance.llm_client.config.api_key = settings.openai_api_key
-    if settings.model_name is not None:
-        _graphiti_instance.llm_client.model = settings.model_name
-
-    # Build indices and constraints once at startup
-    logger.info('Building database indices and constraints...')
-    await _graphiti_instance.build_indices_and_constraints()
-    logger.info('Graphiti singleton initialized successfully')
+    logger.info('Initializing Graphiti connection pool...')
+    _settings = settings
+    logger.info('Connection pool initialized successfully')
 
 
-async def close_graphiti_singleton():
-    """Close the singleton Graphiti instance at application shutdown."""
-    global _graphiti_instance
+async def get_or_create_graphiti_instance(group_id: str) -> ZepGraphiti:
+    """Get or create a Graphiti instance for the given group_id (graph name)."""
+    # Fast path: instance already exists
+    if group_id in _graphiti_pool:
+        return _graphiti_pool[group_id]
 
-    if _graphiti_instance is not None:
-        logger.info('Closing Graphiti singleton instance...')
-        await _graphiti_instance.close()
-        _graphiti_instance = None
-        logger.info('Graphiti singleton closed')
+    # Get or create lock for this group_id
+    async with _pool_lock:
+        if group_id not in _pool_locks:
+            _pool_locks[group_id] = asyncio.Lock()
+        group_lock = _pool_locks[group_id]
+
+    # Create instance with per-graph lock (double-check pattern)
+    async with group_lock:
+        # Double-check: another coroutine may have created it
+        if group_id in _graphiti_pool:
+            return _graphiti_pool[group_id]
+
+        logger.info(f'Creating new Graphiti instance for graph "{group_id}"')
+
+        # Create instance with its own LLM client and embedder (no sharing)
+        instance = ZepGraphiti(
+            uri=_settings.neo4j_uri,
+            user=_settings.neo4j_user,
+            password=_settings.neo4j_password,
+            database=group_id,  # Use group_id as FalkorDB database name
+            llm_client=None,  # Each instance creates its own client (no concurrent state issues)
+        )
+
+        # Apply settings overrides to this instance's LLM client
+        if _settings.openai_base_url is not None:
+            instance.llm_client.config.base_url = _settings.openai_base_url
+        if _settings.openai_api_key is not None:
+            instance.llm_client.config.api_key = _settings.openai_api_key
+        if _settings.model_name is not None:
+            instance.llm_client.model = _settings.model_name
+
+        logger.info(f'Instance LLM client: base_url={instance.llm_client.config.base_url}, model={instance.llm_client.model}')
+        logger.info(f'Instance embedder: {instance.embedder.config.embedding_model} ({instance.embedder.config.embedding_dim}d)')
+
+        # Build indices on first access
+        logger.info(f'Building indices for graph "{group_id}"...')
+        await instance.build_indices_and_constraints()
+
+        _graphiti_pool[group_id] = instance
+        logger.info(f'Graph "{group_id}" ready (pool size: {len(_graphiti_pool)})')
+        return instance
 
 
-async def get_graphiti(settings: ZepEnvDep):
-    """Dependency that returns the singleton Graphiti instance."""
-    if _graphiti_instance is None:
-        raise RuntimeError('Graphiti singleton not initialized. Call initialize_graphiti_singleton() at startup.')
-    yield _graphiti_instance
+async def close_connection_pool():
+    """Close all Graphiti instances in the connection pool."""
+    logger.info(f'Closing connection pool ({len(_graphiti_pool)} graphs)...')
+
+    for group_id, instance in _graphiti_pool.items():
+        logger.info(f'Closing graph "{group_id}"...')
+        await instance.close()
+
+    _graphiti_pool.clear()
+    _pool_locks.clear()
+    logger.info('Connection pool closed')
+
+
+async def get_graphiti_from_body(request: Request) -> ZepGraphiti:
+    """Dependency to extract group_id from request body and return Graphiti instance."""
+    try:
+        body = await request.json()
+        group_id = body.get('group_id')
+        if not group_id:
+            raise HTTPException(status_code=400, detail='group_id is required in request body')
+        return await get_or_create_graphiti_instance(group_id)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=400, detail=f'Failed to parse request body: {e}')
+
+
+async def get_graphiti_from_path(group_id: str) -> ZepGraphiti:
+    """Dependency to get Graphiti instance from path parameter."""
+    return await get_or_create_graphiti_instance(group_id)
+
+
+async def get_graphiti_from_query(group_id: str) -> ZepGraphiti:
+    """Dependency to get Graphiti instance from query parameter."""
+    return await get_or_create_graphiti_instance(group_id)
 
 
 def get_fact_result_from_edge(edge: EntityEdge):
@@ -279,6 +333,3 @@ def get_entity_node_response(node: EntityNode):
         attributes=node.attributes,
         created_at=node.created_at,
     )
-
-
-ZepGraphitiDep = Annotated[ZepGraphiti, Depends(get_graphiti)]
