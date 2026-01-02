@@ -1,17 +1,15 @@
 import asyncio
 import logging
 import os
-from typing import Annotated
 
-from fastapi import Depends, HTTPException, Path, Query, Request
+from fastapi import HTTPException, Path, Query, Request
 from graphiti_core import Graphiti  # type: ignore
 from graphiti_core.edges import EntityEdge  # type: ignore
-from graphiti_core.embedder import EmbedderClient  # type: ignore
 from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError, NodeNotFoundError
 from graphiti_core.llm_client import LLMClient  # type: ignore
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
-from graph_service.config import Settings, ZepEnvDep
+from graph_service.config import Settings
 from graph_service.dto import EntityNodeResponse, FactResult
 from graph_service.events import get_event_bus
 
@@ -219,8 +217,9 @@ class ZepGraphiti(Graphiti):
             event_type='episode.created',
             group_id=group_id,
             data={
-                'uuid': kwargs.get('uuid'),
-                'name': kwargs.get('name', ''),
+                'uuid': results.episode.uuid,
+                'name': results.episode.name,
+                'session_id': results.episode.session_id,
             },
         )
 
