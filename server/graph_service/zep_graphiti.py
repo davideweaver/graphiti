@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Path, Query, Request
 from graphiti_core import Graphiti  # type: ignore
 from graphiti_core.edges import EntityEdge  # type: ignore
 from graphiti_core.embedder import EmbedderClient  # type: ignore
@@ -23,30 +23,41 @@ def create_graph_driver(uri: str, user: str, password: str, database: str = 'dav
     if uri.startswith('falkordb://'):
         from falkordb.asyncio import FalkorDB
         from graphiti_core.driver.falkordb_driver import FalkorDriver
+
         # Extract host and port from URI
         host_port = uri.replace('falkordb://', '').split('/')[0]
         parts = host_port.split(':')
         host = parts[0]
         port = int(parts[1]) if len(parts) > 1 else 6379
-        logger.info(f'Creating FalkorDriver for {host}:{port} using graph "{database}" with timeouts')
+        logger.info(
+            f'Creating FalkorDriver for {host}:{port} using graph "{database}" with timeouts'
+        )
         # Create FalkorDB client with timeout configuration
         falkor_client = FalkorDB(
             host=host,
             port=port,
             username=user if user != 'default' else None,
             password=password if password != 'password' else None,
-            socket_timeout=30.0,           # 30s timeout for operations
-            socket_connect_timeout=10.0,   # 10s timeout for connection
+            socket_timeout=30.0,  # 30s timeout for operations
+            socket_connect_timeout=10.0,  # 10s timeout for connection
         )
         return FalkorDriver(host=host, port=port, database=database, falkor_db=falkor_client)
     else:
         from graphiti_core.driver.neo4j_driver import Neo4jDriver
+
         logger.info(f'Creating Neo4jDriver for {uri}')
         return Neo4jDriver(uri, user, password)
 
 
 class ZepGraphiti(Graphiti):
-    def __init__(self, uri: str, user: str, password: str, llm_client: LLMClient | None = None, database: str = 'dave-weaver'):
+    def __init__(
+        self,
+        uri: str,
+        user: str,
+        password: str,
+        llm_client: LLMClient | None = None,
+        database: str = 'dave-weaver',
+    ):
         driver = create_graph_driver(uri, user, password, database=database)
 
         # Use OpenAIGenericClient for llama.cpp/Ollama compatibility if not provided
@@ -55,32 +66,43 @@ class ZepGraphiti(Graphiti):
             from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 
             llm_config = LLMConfig(
-                api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
-                model=os.getenv("OPENAI_MODEL", "meta-llama-3.1-8b-instruct-q4_k_m"),
-                base_url=os.getenv("OPENAI_BASE_URL", "http://172.16.0.114:9002/v1"),
+                api_key=os.getenv('OPENAI_API_KEY', 'not-needed'),
+                model=os.getenv('OPENAI_MODEL', 'meta-llama-3.1-8b-instruct-q4_k_m'),
+                base_url=os.getenv('OPENAI_BASE_URL', 'http://172.16.0.114:9002/v1'),
             )
             # Set timeout for local LLM inference (default: 120 seconds)
-            timeout = float(os.getenv("LLM_TIMEOUT", "120.0"))
+            timeout = float(os.getenv('LLM_TIMEOUT', '120.0'))
             llm_client = OpenAIGenericClient(config=llm_config, max_tokens=16384)
             llm_client.client.timeout = timeout
-            logger.info(f'Using OpenAIGenericClient with base_url={llm_config.base_url}, model={llm_config.model}')
+            logger.info(
+                f'Using OpenAIGenericClient with base_url={llm_config.base_url}, model={llm_config.model}'
+            )
 
         # Configure local embedder using dedicated llama.cpp embedding server
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
         embedder_config = OpenAIEmbedderConfig(
-            api_key="not-needed",
-            embedding_model=os.getenv("EMBEDDING_MODEL", "nomic-embed-text-v1.5.Q8_0"),
-            embedding_dim=int(os.getenv("EMBEDDING_DIM", "768")),
-            base_url=os.getenv("EMBEDDING_BASE_URL", "http://172.16.0.114:9003/v1"),
+            api_key='not-needed',
+            embedding_model=os.getenv('EMBEDDING_MODEL', 'nomic-embed-text-v1.5.Q8_0'),
+            embedding_dim=int(os.getenv('EMBEDDING_DIM', '768')),
+            base_url=os.getenv('EMBEDDING_BASE_URL', 'http://172.16.0.114:9003/v1'),
         )
         # Set timeout for local embedding inference (default: 60 seconds)
-        embedding_timeout = float(os.getenv("EMBEDDING_TIMEOUT", "60.0"))
+        embedding_timeout = float(os.getenv('EMBEDDING_TIMEOUT', '60.0'))
         embedder = OpenAIEmbedder(config=embedder_config)
         embedder.client.timeout = embedding_timeout
-        logger.info(f'Using local embedder: {embedder.config.embedding_model} ({embedder.config.embedding_dim}d) at {embedder.config.base_url}')
+        logger.info(
+            f'Using local embedder: {embedder.config.embedding_model} ({embedder.config.embedding_dim}d) at {embedder.config.base_url}'
+        )
 
-        super().__init__(uri=None, user=None, password=None, llm_client=llm_client, embedder=embedder, graph_driver=driver)
+        super().__init__(
+            uri=None,
+            user=None,
+            password=None,
+            llm_client=llm_client,
+            embedder=embedder,
+            graph_driver=driver,
+        )
 
     async def save_entity_node(self, name: str, uuid: str, group_id: str, summary: str = ''):
         new_node = EntityNode(
@@ -262,8 +284,12 @@ async def get_or_create_graphiti_instance(group_id: str) -> ZepGraphiti:
         if _settings.model_name is not None:
             instance.llm_client.model = _settings.model_name
 
-        logger.info(f'Instance LLM client: base_url={instance.llm_client.config.base_url}, model={instance.llm_client.model}')
-        logger.info(f'Instance embedder: {instance.embedder.config.embedding_model} ({instance.embedder.config.embedding_dim}d)')
+        logger.info(
+            f'Instance LLM client: base_url={instance.llm_client.config.base_url}, model={instance.llm_client.model}'
+        )
+        logger.info(
+            f'Instance embedder: {instance.embedder.config.embedding_model} ({instance.embedder.config.embedding_dim}d)'
+        )
 
         # Build indices on first access
         logger.info(f'Building indices for graph "{group_id}"...')
@@ -301,12 +327,12 @@ async def get_graphiti_from_body(request: Request) -> ZepGraphiti:
         raise HTTPException(status_code=400, detail=f'Failed to parse request body: {e}')
 
 
-async def get_graphiti_from_path(group_id: str) -> ZepGraphiti:
+async def get_graphiti_from_path(group_id: str = Path(...)) -> ZepGraphiti:
     """Dependency to get Graphiti instance from path parameter."""
     return await get_or_create_graphiti_instance(group_id)
 
 
-async def get_graphiti_from_query(group_id: str) -> ZepGraphiti:
+async def get_graphiti_from_query(group_id: str = Query(...)) -> ZepGraphiti:
     """Dependency to get Graphiti instance from query parameter."""
     return await get_or_create_graphiti_instance(group_id)
 

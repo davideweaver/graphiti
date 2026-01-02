@@ -79,7 +79,9 @@ class WebSocketManager:
             logger.debug('No active connections, skipping broadcast')
             return
 
-        logger.debug(f'Broadcasting to all groups: {total_connections} connection(s) across {len(self.active_connections)} group(s)')
+        logger.debug(
+            f'Broadcasting to all groups: {total_connections} connection(s) across {len(self.active_connections)} group(s)'
+        )
 
         # Track dead connections by group
         dead_by_group: dict[str, set[WebSocket]] = defaultdict(set)

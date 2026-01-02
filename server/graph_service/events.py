@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GraphEvent:
     """Event representing a graph modification."""
+
     event_type: str
     group_id: str
     data: dict[str, Any]

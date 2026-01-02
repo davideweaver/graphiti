@@ -10,9 +10,9 @@ from graph_service.config import get_settings
 from graph_service.events import get_event_bus
 from graph_service.routers import ingest, retrieve
 from graph_service.routers.ingest import async_worker
-from graph_service.websocket import get_ws_manager, router as websocket_router
+from graph_service.websocket import get_ws_manager
+from graph_service.websocket import router as websocket_router
 from graph_service.zep_graphiti import close_connection_pool, initialize_connection_pool
-
 
 # Configure application logging from LOG_LEVEL environment variable
 log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -20,7 +20,7 @@ log_level = getattr(logging, log_level_name, logging.INFO)
 logging.basicConfig(
     level=log_level,
     format='%(levelname)s:     %(name)s - %(message)s',
-    force=True  # Override any existing configuration
+    force=True,  # Override any existing configuration
 )
 
 # Suppress noisy HTTP request logs from httpx

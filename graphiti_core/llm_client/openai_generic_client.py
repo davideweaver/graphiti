@@ -121,18 +121,29 @@ class OpenAIGenericClient(LLMClient):
                 }
 
             # Debug logging for request details
-            logger.debug(f'LLM Request - model={self.model or DEFAULT_MODEL}, temp={self.temperature}, max_tokens={self.max_tokens}')
+            logger.debug(
+                f'LLM Request - model={self.model or DEFAULT_MODEL}, temp={self.temperature}, max_tokens={self.max_tokens}'
+            )
             logger.debug(f'LLM Request - response_format type: {response_format.get("type")}')
             if response_format.get('type') == 'json_schema':
                 schema_name = response_format.get('json_schema', {}).get('name')
                 logger.debug(f'LLM Request - schema name: {schema_name}')
                 # Log full schema for debugging "Invalid input batch" errors
                 import json as json_module
-                logger.debug(f'LLM Request - full schema: {json_module.dumps(response_format.get("json_schema", {}).get("schema"), indent=2)}')
+
+                logger.debug(
+                    f'LLM Request - full schema: {json_module.dumps(response_format.get("json_schema", {}).get("schema"), indent=2)}'
+                )
             logger.debug(f'LLM Request - message count: {len(openai_messages)}')
             for idx, msg in enumerate(openai_messages):
-                content_preview = msg.get('content', '')[:200] if isinstance(msg.get('content'), str) else str(msg.get('content'))[:200]
-                logger.debug(f'LLM Request - message[{idx}] role={msg.get("role")}, content_preview={content_preview}...')
+                content_preview = (
+                    msg.get('content', '')[:200]
+                    if isinstance(msg.get('content'), str)
+                    else str(msg.get('content'))[:200]
+                )
+                logger.debug(
+                    f'LLM Request - message[{idx}] role={msg.get("role")}, content_preview={content_preview}...'
+                )
 
             response = await self.client.chat.completions.create(
                 model=self.model or DEFAULT_MODEL,
@@ -149,9 +160,13 @@ class OpenAIGenericClient(LLMClient):
         except Exception as e:
             logger.error(f'Error in generating LLM response: {e}')
             # Log request details on error to help debug
-            logger.error(f'Failed request - model={self.model or DEFAULT_MODEL}, response_format_type={response_format.get("type")}')
+            logger.error(
+                f'Failed request - model={self.model or DEFAULT_MODEL}, response_format_type={response_format.get("type")}'
+            )
             if response_format.get('type') == 'json_schema':
-                logger.error(f'Failed request - schema_name={response_format.get("json_schema", {}).get("name")}')
+                logger.error(
+                    f'Failed request - schema_name={response_format.get("json_schema", {}).get("name")}'
+                )
             raise
 
     async def generate_response(

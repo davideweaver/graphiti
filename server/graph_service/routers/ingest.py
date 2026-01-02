@@ -17,7 +17,6 @@ from graph_service.zep_graphiti import (
     get_graphiti_from_query,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -55,11 +54,14 @@ class AsyncWorker:
                 try:
                     # Let LLM_TIMEOUT and EMBEDDING_TIMEOUT handle timeouts
                     await job()
-                    logger.info(f'Job completed successfully (queue: {self.queue.qsize()} remaining)')
+                    logger.info(
+                        f'Job completed successfully (queue: {self.queue.qsize()} remaining)'
+                    )
                     logger.debug('AsyncWorker - Job completed successfully')
                 except Exception as e:
                     logger.error(f'AsyncWorker - ERROR in job execution: {type(e).__name__}: {e}')
                     import traceback
+
                     traceback.print_exc()
                 finally:
                     self.queue.task_done()
@@ -72,6 +74,7 @@ class AsyncWorker:
             except Exception as e:
                 logger.error(f'AsyncWorker - FATAL ERROR in worker loop: {type(e).__name__}: {e}')
                 import traceback
+
                 traceback.print_exc()
                 break
         logger.debug('AsyncWorker - Worker loop exited')
@@ -98,11 +101,15 @@ async def add_messages(
     request: AddMessagesRequest,
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
 ):
-    logger.debug(f'POST /messages - Received {len(request.messages)} message(s) for group_id={request.group_id}')
+    logger.debug(
+        f'POST /messages - Received {len(request.messages)} message(s) for group_id={request.group_id}'
+    )
 
     async def add_messages_task(m: Message):
         logger.debug(f'Task - Processing message: uuid={m.uuid}, role={m.role_type}')
-        logger.debug(f'Task - Calling graphiti.add_episode_with_events() with group_id={request.group_id}')
+        logger.debug(
+            f'Task - Calling graphiti.add_episode_with_events() with group_id={request.group_id}'
+        )
         try:
             await graphiti.add_episode_with_events(
                 uuid=m.uuid,
@@ -122,7 +129,9 @@ async def add_messages(
 
     for m in request.messages:
         await async_worker.queue.put(partial(add_messages_task, m))
-        logger.debug(f'POST /messages - Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})')
+        logger.debug(
+            f'POST /messages - Queued message {m.uuid} (queue size now: {async_worker.queue.qsize()})'
+        )
 
     queue_size = async_worker.queue.qsize()
     logger.info(f'Added {len(request.messages)} message(s) to queue (total queued: {queue_size})')
