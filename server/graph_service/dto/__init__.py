@@ -1,6 +1,7 @@
 from .common import Message, Result
 from .ingest import AddEntityNodeRequest, AddMessagesRequest
 from .retrieve import (
+    DaySessionCount,
     EntityListResponse,
     EntityNodeResponse,
     FactResult,
@@ -8,6 +9,9 @@ from .retrieve import (
     GetMemoryResponse,
     SearchQuery,
     SearchResults,
+    SessionListResponse,
+    SessionResponse,
+    SessionStatsByDayResponse,
 )
 
 __all__ = [
@@ -22,4 +26,8 @@ __all__ = [
     'GetMemoryResponse',
     'EntityNodeResponse',
     'EntityListResponse',
+    'SessionResponse',
+    'SessionListResponse',
+    'DaySessionCount',
+    'SessionStatsByDayResponse',
 ]

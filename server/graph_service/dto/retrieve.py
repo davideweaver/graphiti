@@ -62,3 +62,31 @@ class EntityListResponse(BaseModel):
     total: int
     has_more: bool
     cursor: str | None = None
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    episode_count: int
+    first_episode_date: datetime
+    last_episode_date: datetime
+    source_descriptions: list[str]
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionResponse]
+    total: int
+    has_more: bool
+    cursor: str | None = None
+
+
+class DaySessionCount(BaseModel):
+    date: str
+    count: int
+
+
+class SessionStatsByDayResponse(BaseModel):
+    stats: list[DaySessionCount]
+    total_days: int

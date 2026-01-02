@@ -8,12 +8,16 @@ from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
 
 from graph_service.dto import (
+    DaySessionCount,
     EntityListResponse,
     GetMemoryRequest,
     GetMemoryResponse,
     Message,
     SearchQuery,
     SearchResults,
+    SessionListResponse,
+    SessionResponse,
+    SessionStatsByDayResponse,
 )
 from graph_service.zep_graphiti import (
     ZepGraphiti,
@@ -281,3 +285,187 @@ async def get_entity_relationships(
         logging.error(f'Error fetching relationships: {e}')
         # If query fails, return empty list
         return EntityListResponse(entities=[], total=0, has_more=False, cursor=None)
+
+
+@router.get('/sessions/{group_id}', status_code=status.HTTP_200_OK)
+async def list_sessions(
+    group_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    limit: int = Query(50, ge=1, le=500, description='Maximum number of sessions to return'),
+    cursor: str | None = Query(None, description='Pagination cursor (base64-encoded offset)'),
+    created_after: datetime | None = Query(None, description='Filter episodes created after (ISO 8601)'),
+    created_before: datetime | None = Query(None, description='Filter episodes created before (ISO 8601)'),
+    valid_after: datetime | None = Query(None, description='Filter episodes occurred after (ISO 8601)'),
+    valid_before: datetime | None = Query(None, description='Filter episodes occurred before (ISO 8601)'),
+    sort_order: str = Query('desc', pattern='^(asc|desc)$', description='Sort by last episode date'),
+):
+    """List all sessions in a group with metadata.
+
+    Sessions are groups of related episodes identified by session_id.
+    Returns metadata including episode count and date range for each session.
+    """
+    # Parse offset from cursor
+    offset = 0
+    if cursor:
+        try:
+            cursor_data = json.loads(base64.b64decode(cursor).decode('utf-8'))
+            offset = cursor_data.get('offset', 0)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Invalid cursor format: {e}',
+            ) from e
+
+    # Build WHERE clauses
+    where_clauses = ['e.group_id = $group_id', 'e.session_id IS NOT NULL']
+    query_params = {'group_id': group_id, 'limit': limit, 'offset': offset}
+
+    # Add date filters
+    if created_after:
+        where_clauses.append('e.created_at >= $created_after')
+        query_params['created_after'] = created_after.isoformat()
+    if created_before:
+        where_clauses.append('e.created_at <= $created_before')
+        query_params['created_before'] = created_before.isoformat()
+    if valid_after:
+        where_clauses.append('e.valid_at >= $valid_after')
+        query_params['valid_after'] = valid_after.isoformat()
+    if valid_before:
+        where_clauses.append('e.valid_at <= $valid_before')
+        query_params['valid_before'] = valid_before.isoformat()
+
+    where_query = ' AND '.join(where_clauses)
+    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+
+    # Count total sessions (for pagination metadata)
+    count_query = f"""
+        MATCH (e:Episodic)
+        WHERE {where_query}
+        RETURN count(DISTINCT e.session_id) AS total
+    """
+    count_result, _, _ = await graphiti.driver.execute_query(count_query, **query_params)
+    total_count = count_result[0]['total'] if count_result else 0
+
+    # Fetch sessions with metadata
+    sessions_query = f"""
+        MATCH (e:Episodic)
+        WHERE {where_query}
+        WITH e.session_id AS session_id,
+             count(e) AS episode_count,
+             min(e.valid_at) AS first_episode_date,
+             max(e.valid_at) AS last_episode_date,
+             collect(DISTINCT e.source_description) AS source_descriptions
+        RETURN session_id, episode_count, first_episode_date,
+               last_episode_date, source_descriptions
+        ORDER BY last_episode_date {order_direction}
+        SKIP $offset
+        LIMIT $limit
+    """
+
+    records, _, _ = await graphiti.driver.execute_query(sessions_query, **query_params)
+
+    # Parse results into DTOs
+    from graphiti_core.helpers import parse_db_date
+
+    sessions = []
+    for record in records:
+        sessions.append(
+            SessionResponse(
+                session_id=record['session_id'],
+                episode_count=record['episode_count'],
+                first_episode_date=parse_db_date(record['first_episode_date']),
+                last_episode_date=parse_db_date(record['last_episode_date']),
+                source_descriptions=record['source_descriptions'],
+            )
+        )
+
+    # Generate next cursor
+    next_cursor = None
+    if len(sessions) == limit:
+        next_offset = offset + limit
+        cursor_obj = {'offset': next_offset}
+        next_cursor = base64.b64encode(json.dumps(cursor_obj).encode('utf-8')).decode('utf-8')
+
+    return SessionListResponse(
+        sessions=sessions,
+        total=total_count,
+        has_more=len(sessions) == limit,
+        cursor=next_cursor,
+    )
+
+
+@router.get('/sessions/{group_id}/stats/by-day', status_code=status.HTTP_200_OK)
+async def get_session_stats_by_day(
+    group_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    created_after: datetime | None = Query(None, description='Filter episodes created after (ISO 8601)'),
+    created_before: datetime | None = Query(None, description='Filter episodes created before (ISO 8601)'),
+    valid_after: datetime | None = Query(None, description='Filter episodes occurred after (ISO 8601)'),
+    valid_before: datetime | None = Query(None, description='Filter episodes occurred before (ISO 8601)'),
+):
+    """Get count of unique sessions per day.
+
+    Aggregates session activity by day, useful for visualizing session patterns over time.
+    Uses episode valid_at (when episode occurred) for day grouping.
+    """
+    # Build WHERE clauses (same as list endpoint)
+    where_clauses = ['e.group_id = $group_id', 'e.session_id IS NOT NULL']
+    query_params = {'group_id': group_id}
+
+    if created_after:
+        where_clauses.append('e.created_at >= $created_after')
+        query_params['created_after'] = created_after.isoformat()
+    if created_before:
+        where_clauses.append('e.created_at <= $created_before')
+        query_params['created_before'] = created_before.isoformat()
+    if valid_after:
+        where_clauses.append('e.valid_at >= $valid_after')
+        query_params['valid_after'] = valid_after.isoformat()
+    if valid_before:
+        where_clauses.append('e.valid_at <= $valid_before')
+        query_params['valid_before'] = valid_before.isoformat()
+
+    where_query = ' AND '.join(where_clauses)
+
+    # Query: sessions per day (using valid_at)
+    stats_query = f"""
+        MATCH (e:Episodic)
+        WHERE {where_query}
+        WITH date(e.valid_at) AS day, e.session_id AS session_id
+        WITH day, count(DISTINCT session_id) AS count
+        RETURN toString(day) AS date, count
+        ORDER BY day ASC
+    """
+
+    records, _, _ = await graphiti.driver.execute_query(stats_query, **query_params)
+
+    # Parse results
+    stats = [DaySessionCount(date=record['date'], count=record['count']) for record in records]
+
+    return SessionStatsByDayResponse(stats=stats, total_days=len(stats))
+
+
+@router.get('/sessions/{group_id}/{session_id}', status_code=status.HTTP_200_OK)
+async def get_session(
+    group_id: str,
+    session_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+):
+    """Get all episodes for a specific session by UUID.
+
+    Returns the full episode data for all episodes in the session.
+    Returns 404 if session does not exist (no episodes found).
+    """
+    # Retrieve all episodes for this session
+    # Use a large last_n value to get all episodes (no practical limit)
+    episodes = await graphiti.retrieve_episodes(
+        group_ids=[group_id],
+        last_n=10000,  # Large enough to get all episodes in a session
+        reference_time=datetime.now(timezone.utc),
+        session_id=session_id,
+    )
+
+    if not episodes:
+        raise HTTPException(status_code=404, detail=f'Session not found: {session_id}')
+
+    return episodes
