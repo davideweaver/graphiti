@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -85,11 +87,11 @@ def compose_query_from_messages(messages: list[Message]):
     return combined_query
 
 
-@router.get('/entities/{uuid}', status_code=status.HTTP_200_OK)
+@router.get('/entities/{group_id}/{uuid}', status_code=status.HTTP_200_OK)
 async def get_entity(
-    uuid: str,
     group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
+    uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
 ):
     """Get a single entity node by UUID."""
     try:
@@ -99,28 +101,93 @@ async def get_entity(
         raise HTTPException(status_code=404, detail=f'Entity not found: {uuid}')
 
 
-@router.get('/entities', status_code=status.HTTP_200_OK)
+@router.get('/entities/{group_id}', status_code=status.HTTP_200_OK)
 async def list_entities(
-    group_id: str = Query(..., description='The group ID to filter entities'),
+    group_id: str,
     limit: int = Query(50, ge=1, le=500, description='Maximum number of entities to return'),
-    cursor: str | None = Query(None, description='Pagination cursor (UUID of last entity)'),
+    cursor: str | None = Query(
+        None, description='Pagination cursor (base64-encoded composite cursor)'
+    ),
     with_embeddings: bool = Query(False, description='Include name embeddings in response'),
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)] = None,
+    sort_by: str = Query(
+        'uuid',
+        pattern='^(uuid|name|created_at)$',
+        description='Field to sort by: uuid, name, or created_at',
+    ),
+    sort_order: str = Query('desc', pattern='^(asc|desc)$', description='Sort order: asc or desc'),
+    name_filter: str | None = Query(
+        None, description='Filter entities by name (case-insensitive substring match)'
+    ),
+    label: str | None = Query(None, description='Filter entities by label/type'),
+    created_after: datetime | None = Query(
+        None, description='Filter entities created after this datetime (ISO 8601)'
+    ),
+    created_before: datetime | None = Query(
+        None, description='Filter entities created before this datetime (ISO 8601)'
+    ),
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)] = None,
 ):
-    """List entities for a group with pagination."""
+    """List entities for a group with pagination, sorting, and filtering.
+
+    Supports:
+    - Sorting by uuid, name, or created_at (ascending or descending)
+    - Filtering by name (substring), label (entity type), and date range
+    - Cursor-based pagination with composite cursors for non-UUID sorts
+    """
+    # Parse offset from cursor (offset-based pagination due to FalkorDB bug)
+    # FalkorDB has a bug where WHERE + ORDER BY breaks comparison operators
+    offset = 0
+    if cursor:
+        try:
+            cursor_data = json.loads(base64.b64decode(cursor).decode('utf-8'))
+            offset = cursor_data.get('offset', 0)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Invalid cursor format: {e}',
+            ) from e
+
+    # Fetch entities with sorting and filtering
+    # Convert datetime objects to ISO strings for database comparison
+    created_after_str = created_after.isoformat() if created_after else None
+    created_before_str = created_before.isoformat() if created_before else None
+
+    # Get total count of entities matching the filters
+    total_count = await EntityNode.count_by_group_ids(
+        graphiti.driver,
+        group_ids=[group_id],
+        name_filter=name_filter,
+        label_filter=label,
+        created_after=created_after_str,
+        created_before=created_before_str,
+    )
+
     entities = await EntityNode.get_by_group_ids(
         graphiti.driver,
         group_ids=[group_id],
         limit=limit,
-        uuid_cursor=cursor,
+        offset=offset,
         with_embeddings=with_embeddings,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        name_filter=name_filter,
+        label_filter=label,
+        created_after=created_after_str,
+        created_before=created_before_str,
     )
+
+    # Generate next cursor with new offset
+    next_cursor = None
+    if entities and len(entities) == limit:
+        next_offset = offset + limit
+        cursor_obj = {'offset': next_offset}
+        next_cursor = base64.b64encode(json.dumps(cursor_obj).encode('utf-8')).decode('utf-8')
 
     return EntityListResponse(
         entities=[get_entity_node_response(e) for e in entities],
-        total=len(entities),
+        total=total_count,
         has_more=len(entities) == limit,
-        cursor=entities[-1].uuid if entities else None,
+        cursor=next_cursor,
     )
 
 
@@ -149,11 +216,11 @@ async def get_entities_by_uuids(
     )
 
 
-@router.get('/entities/{uuid}/relationships', status_code=status.HTTP_200_OK)
+@router.get('/entities/{group_id}/{uuid}/relationships', status_code=status.HTTP_200_OK)
 async def get_entity_relationships(
-    uuid: str,
     group_id: str,
-    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
+    uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
 ):
     """Get entities related to this entity via RELATES_TO relationships."""
     # Query for entities with RELATES_TO relationships (both directions)
@@ -196,6 +263,7 @@ async def get_entity_relationships(
         )
     except Exception as e:
         import logging
-        logging.error(f"Error fetching relationships: {e}")
+
+        logging.error(f'Error fetching relationships: {e}')
         # If query fails, return empty list
         return EntityListResponse(entities=[], total=0, has_more=False, cursor=None)

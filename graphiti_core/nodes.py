@@ -544,16 +544,117 @@ class EntityNode(Node):
         return nodes
 
     @classmethod
+    async def count_by_group_ids(
+        cls,
+        driver: GraphDriver,
+        group_ids: list[str],
+        name_filter: str | None = None,
+        label_filter: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+    ) -> int:
+        """Count entities matching the given filters."""
+        # Build WHERE clauses (same logic as get_by_group_ids)
+        where_clauses = ['n.group_id IN $group_ids']
+        query_params: dict[str, Any] = {
+            'group_ids': group_ids,
+        }
+
+        # Add filters
+        if name_filter:
+            where_clauses.append('toLower(n.name) CONTAINS toLower($name_filter)')
+            query_params['name_filter'] = name_filter
+
+        if label_filter:
+            where_clauses.append('$label_filter IN labels(n)')
+            query_params['label_filter'] = label_filter
+
+        if created_after:
+            where_clauses.append('n.created_at >= $created_after')
+            query_params['created_after'] = created_after
+
+        if created_before:
+            where_clauses.append('n.created_at <= $created_before')
+            query_params['created_before'] = created_before
+
+        where_query = ' AND '.join(where_clauses)
+
+        query = f"""
+            MATCH (n:Entity)
+            WHERE {where_query}
+            RETURN count(n) AS total
+        """
+
+        records, _, _ = await driver.execute_query(
+            query,
+            **query_params,
+            routing_='r',
+        )
+
+        return records[0]['total'] if records else 0
+
+    @classmethod
     async def get_by_group_ids(
         cls,
         driver: GraphDriver,
         group_ids: list[str],
         limit: int | None = None,
-        uuid_cursor: str | None = None,
+        offset: int = 0,
         with_embeddings: bool = False,
+        sort_by: str = 'uuid',
+        sort_order: str = 'desc',
+        name_filter: str | None = None,
+        label_filter: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ):
-        cursor_query: LiteralString = 'AND n.uuid < $uuid' if uuid_cursor else ''
+        # Build WHERE clauses
+        where_clauses = ['n.group_id IN $group_ids']
+        query_params: dict[str, Any] = {
+            'group_ids': group_ids,
+        }
+
+        # NOTE: Using offset-based pagination due to FalkorDB bug
+        # FalkorDB's WHERE clause is broken when combined with ORDER BY
+        # No cursor logic needed - we use SKIP instead
+
+        # Add filters
+        if name_filter:
+            where_clauses.append('toLower(n.name) CONTAINS toLower($name_filter)')
+            query_params['name_filter'] = name_filter
+
+        if label_filter:
+            where_clauses.append('$label_filter IN labels(n)')
+            query_params['label_filter'] = label_filter
+
+        if created_after:
+            where_clauses.append('n.created_at >= $created_after')
+            query_params['created_after'] = created_after
+
+        if created_before:
+            where_clauses.append('n.created_at <= $created_before')
+            query_params['created_before'] = created_before
+
+        where_query = ' AND '.join(where_clauses)
+
+        # Build ORDER BY clause
+        sort_field_map = {
+            'uuid': 'n.uuid',
+            'name': 'n.name',
+            'created_at': 'n.created_at',
+        }
+        sort_field = sort_field_map.get(sort_by, 'n.uuid')
+        sort_direction = sort_order.upper()
+
+        # Use normal ordering with offset pagination
+        order_query = f'ORDER BY {sort_field} {sort_direction}, n.uuid {sort_direction}'
+
+        # Build SKIP and LIMIT
+        skip_query: LiteralString = f'SKIP {offset}' if offset > 0 else ''
         limit_query: LiteralString = 'LIMIT $limit' if limit is not None else ''
+        if limit is not None:
+            query_params['limit'] = limit
+
         with_embeddings_query: LiteralString = (
             """,
             n.name_embedding AS name_embedding
@@ -562,24 +663,30 @@ class EntityNode(Node):
             else ''
         )
 
-        records, _, _ = await driver.execute_query(
-            """
+        query = (
+            f"""
             MATCH (n:Entity)
-            WHERE n.group_id IN $group_ids
-            """
-            + cursor_query
-            + """
+            WHERE {where_query}
             RETURN
             """
             + get_entity_node_return_query(driver.provider)
             + with_embeddings_query
-            + """
-            ORDER BY n.uuid DESC
+            + f"""
+            {order_query}
+            {skip_query}
             """
-            + limit_query,
-            group_ids=group_ids,
-            uuid=uuid_cursor,
-            limit=limit,
+            + limit_query
+        )
+
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.debug(f'Cypher query: {query}')
+        logger.debug(f'Query params: {query_params}')
+
+        records, _, _ = await driver.execute_query(
+            query,
+            **query_params,
             routing_='r',
         )
 
