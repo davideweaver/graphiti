@@ -110,6 +110,18 @@ async def add_messages(
         logger.debug(
             f'Task - Calling graphiti.add_episode_with_events() with group_id={request.group_id}'
         )
+
+        # Extract session_id from source_description if not explicitly provided
+        if m.session_id is None and m.source_description:
+            from graphiti_core.utils.session_utils import extract_session_id
+
+            extracted_id, cleaned_desc = extract_session_id(m.source_description)
+            session_id = extracted_id
+            source_desc = cleaned_desc
+        else:
+            session_id = m.session_id
+            source_desc = m.source_description
+
         try:
             await graphiti.add_episode_with_events(
                 uuid=m.uuid,
@@ -118,7 +130,8 @@ async def add_messages(
                 episode_body=f'[{m.role_type}]: {m.content}',
                 reference_time=m.timestamp,
                 source=EpisodeType.message,
-                source_description=m.source_description,
+                source_description=source_desc,
+                session_id=session_id,
                 entity_types=ENTITY_TYPES,
             )
             logger.debug('Task - add_episode_with_events() completed successfully')

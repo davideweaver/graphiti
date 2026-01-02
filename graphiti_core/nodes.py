@@ -303,6 +303,10 @@ class EpisodicNode(Node):
         description='list of entity edges referenced in this episode',
         default_factory=list,
     )
+    session_id: str | None = Field(
+        default=None,
+        description='session UUID for grouping related episodes',
+    )
 
     async def save(self, driver: GraphDriver):
         if driver.graph_operations_interface:
@@ -318,6 +322,7 @@ class EpisodicNode(Node):
             'created_at': self.created_at,
             'valid_at': self.valid_at,
             'source': self.source.value,
+            'session_id': self.session_id,
         }
 
         result = await driver.execute_query(
@@ -855,6 +860,7 @@ def get_episodic_node_from_record(record: Any) -> EpisodicNode:
         name=record['name'],
         source_description=record['source_description'],
         entity_edges=record['entity_edges'],
+        session_id=record.get('session_id'),
     )
 
 

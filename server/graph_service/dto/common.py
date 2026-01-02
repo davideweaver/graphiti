@@ -26,3 +26,6 @@ class Message(BaseModel):
     source_description: str = Field(
         default='', description='The description of the source of the message'
     )
+    session_id: str | None = Field(
+        default=None, description='The session UUID for grouping related episodes'
+    )

@@ -31,7 +31,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
             # Entity node
             'CREATE INDEX FOR (n:Entity) ON (n.uuid, n.group_id, n.name, n.created_at)',
             # Episodic node
-            'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at)',
+            'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at, n.session_id)',
             # Community node
             'CREATE INDEX FOR (n:Community) ON (n.uuid)',
             # RELATES_TO edge
@@ -61,6 +61,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         'CREATE INDEX created_at_entity_index IF NOT EXISTS FOR (n:Entity) ON (n.created_at)',
         'CREATE INDEX created_at_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.created_at)',
         'CREATE INDEX valid_at_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.valid_at)',
+        'CREATE INDEX session_id_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.session_id)',
         'CREATE INDEX name_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.name)',
         'CREATE INDEX created_at_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.created_at)',
         'CREATE INDEX expired_at_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.expired_at)',

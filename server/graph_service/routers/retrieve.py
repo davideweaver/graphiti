@@ -56,11 +56,25 @@ async def get_entity_edge(
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
 async def get_episodes(
     group_id: str,
-    last_n: int,
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    last_n: int = Query(..., description='Number of most recent episodes to retrieve'),
+    start_date: datetime | None = Query(
+        None, description='Filter episodes with valid_at >= this datetime (ISO 8601)'
+    ),
+    end_date: datetime | None = Query(
+        None, description='Filter episodes with valid_at <= this datetime (ISO 8601)'
+    ),
+    session_id: str | None = Query(
+        None, description='Filter episodes by session UUID from source_description'
+    ),
 ):
     episodes = await graphiti.retrieve_episodes(
-        group_ids=[group_id], last_n=last_n, reference_time=datetime.now(timezone.utc)
+        group_ids=[group_id],
+        last_n=last_n,
+        reference_time=datetime.now(timezone.utc),
+        start_date=start_date,
+        end_date=end_date,
+        session_id=session_id,
     )
     return episodes
 

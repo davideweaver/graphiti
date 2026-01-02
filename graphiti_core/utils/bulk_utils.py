@@ -161,6 +161,9 @@ async def add_nodes_and_edges_bulk_tx(
     for episode in episodes:
         episode['source'] = str(episode['source'].value)
         episode.pop('labels', None)
+        # Ensure session_id is present (may be None for backward compatibility)
+        if 'session_id' not in episode:
+            episode['session_id'] = None
 
     nodes = []
 

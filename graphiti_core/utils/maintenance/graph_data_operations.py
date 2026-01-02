@@ -64,6 +64,9 @@ async def retrieve_episodes(
     last_n: int = EPISODE_WINDOW_LEN,
     group_ids: list[str] | None = None,
     source: EpisodeType | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    session_id: str | None = None,
 ) -> list[EpisodicNode]:
     """
     Retrieve the last n episodic nodes from the graph.
@@ -75,6 +78,10 @@ async def retrieve_episodes(
                                    querying the graph's state at a specific point in time.
         last_n (int, optional): The number of most recent episodes to retrieve, relative to the reference_time.
         group_ids (list[str], optional): The list of group ids to return data from.
+        source (EpisodeType, optional): Filter by episode source type (message, json, text).
+        start_date (datetime, optional): Filter episodes with valid_at >= start_date.
+        end_date (datetime, optional): Filter episodes with valid_at <= end_date.
+        session_id (str, optional): Filter episodes by session UUID using direct field matching.
 
     Returns:
         list[EpisodicNode]: A list of EpisodicNode objects representing the retrieved episodes.
@@ -89,6 +96,18 @@ async def retrieve_episodes(
     if source is not None:
         query_filter += '\nAND e.source = $source'
         query_params['source'] = source.name
+
+    if start_date is not None:
+        query_filter += '\nAND e.valid_at >= $start_date'
+        query_params['start_date'] = start_date
+
+    if end_date is not None:
+        query_filter += '\nAND e.valid_at <= $end_date'
+        query_params['end_date'] = end_date
+
+    if session_id is not None:
+        query_filter += '\nAND e.session_id = $session_id'
+        query_params['session_id'] = session_id
 
     query: LiteralString = (
         """

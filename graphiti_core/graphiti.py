@@ -583,6 +583,9 @@ class Graphiti:
         last_n: int = EPISODE_WINDOW_LEN,
         group_ids: list[str] | None = None,
         source: EpisodeType | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        session_id: str | None = None,
         driver: GraphDriver | None = None,
     ) -> list[EpisodicNode]:
         """
@@ -599,11 +602,25 @@ class Graphiti:
             The number of episodes to retrieve. Defaults to EPISODE_WINDOW_LEN.
         group_ids : list[str | None], optional
             The group ids to return data from.
+        source : EpisodeType | None, optional
+            Filter by episode source type.
+        start_date : datetime | None, optional
+            Filter episodes with valid_at >= start_date. Episodes occurring at or
+            after this datetime will be included.
+        end_date : datetime | None, optional
+            Filter episodes with valid_at <= end_date. Episodes occurring at or
+            before this datetime will be included.
+        session_id : str | None, optional
+            Filter episodes by session UUID. Matches episodes where source_description
+            contains "session: <session_id>". Case-insensitive.
+        driver : GraphDriver | None, optional
+            Override the default driver instance.
 
         Returns
         -------
         list[EpisodicNode]
-            A list of the most recent EpisodicNode objects.
+            A list of the most recent EpisodicNode objects matching the filters,
+            returned in chronological order (oldest first).
 
         Notes
         -----
@@ -613,7 +630,9 @@ class Graphiti:
         if driver is None:
             driver = self.clients.driver
 
-        return await retrieve_episodes(driver, reference_time, last_n, group_ids, source)
+        return await retrieve_episodes(
+            driver, reference_time, last_n, group_ids, source, start_date, end_date, session_id
+        )
 
     async def add_episode(
         self,
@@ -622,6 +641,7 @@ class Graphiti:
         source_description: str,
         reference_time: datetime,
         source: EpisodeType = EpisodeType.message,
+        session_id: str | None = None,
         group_id: str | None = None,
         uuid: str | None = None,
         update_communities: bool = False,
@@ -732,6 +752,7 @@ class Graphiti:
                         source=source,
                         content=episode_body,
                         source_description=source_description,
+                        session_id=session_id,
                         created_at=now,
                         valid_at=reference_time,
                     )
