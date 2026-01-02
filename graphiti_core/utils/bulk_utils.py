@@ -98,6 +98,32 @@ def _build_directed_uuid_map(pairs: list[tuple[str, str]]) -> dict[str, str]:
     return {uuid: find(uuid) for uuid in parent}
 
 
+def _ensure_primitive_values(attributes: dict[str, Any]) -> dict[str, Any]:
+    """Convert all values in a dict to primitive types (str, int, float, bool, None) or arrays of primitives.
+
+    FalkorDB and other graph databases only support primitive types as property values.
+    This function recursively converts complex types to JSON strings.
+    """
+    result: dict[str, Any] = {}
+    for key, value in attributes.items():
+        if value is None or isinstance(value, (str, int, float, bool)):
+            result[key] = value
+        elif isinstance(value, (list, tuple)):
+            # Check if all elements are primitives
+            if all(isinstance(item, (str, int, float, bool, type(None))) for item in value):
+                result[key] = list(value)
+            else:
+                # Convert non-primitive array to JSON string
+                result[key] = json.dumps(value)
+        elif isinstance(value, dict):
+            # Convert nested dict to JSON string
+            result[key] = json.dumps(value)
+        else:
+            # Convert any other type to JSON string
+            result[key] = json.dumps(value)
+    return result
+
+
 class RawEpisode(BaseModel):
     name: str
     uuid: str | None = Field(default=None)
@@ -185,7 +211,9 @@ async def add_nodes_and_edges_bulk_tx(
             attributes = convert_datetimes_to_strings(node.attributes) if node.attributes else {}
             entity_data['attributes'] = json.dumps(attributes)
         else:
-            entity_data.update(node.attributes or {})
+            # Ensure all attribute values are primitives for FalkorDB/Neo4j
+            attributes = _ensure_primitive_values(node.attributes) if node.attributes else {}
+            entity_data.update(attributes)
 
         nodes.append(entity_data)
 
@@ -212,7 +240,9 @@ async def add_nodes_and_edges_bulk_tx(
             attributes = convert_datetimes_to_strings(edge.attributes) if edge.attributes else {}
             edge_data['attributes'] = json.dumps(attributes)
         else:
-            edge_data.update(edge.attributes or {})
+            # Ensure all attribute values are primitives for FalkorDB/Neo4j
+            attributes = _ensure_primitive_values(edge.attributes) if edge.attributes else {}
+            edge_data.update(attributes)
 
         edges.append(edge_data)
 
