@@ -38,10 +38,13 @@ from graphiti_core.models.nodes.node_db_queries import (
     COMMUNITY_NODE_RETURN_NEPTUNE,
     EPISODIC_NODE_RETURN,
     EPISODIC_NODE_RETURN_NEPTUNE,
+    SESSION_NODE_RETURN,
+    SESSION_NODE_RETURN_NEPTUNE,
     get_community_node_save_query,
     get_entity_node_return_query,
     get_entity_node_save_query,
     get_episode_node_save_query,
+    get_session_node_save_query,
 )
 from graphiti_core.utils.datetime_utils import utc_now
 
@@ -700,6 +703,87 @@ class EntityNode(Node):
         return nodes
 
 
+class SessionNode(Node):
+    """Node representing a conversation session with aggregated metadata."""
+
+    session_id: str = Field(description='UUID of the session')
+    summary: str = Field(description='Rolling summary of session content', default='')
+    episode_count: int = Field(description='Number of episodes in session', default=0)
+    first_episode_date: datetime = Field(description='Timestamp of first episode')
+    last_episode_date: datetime = Field(description='Timestamp of most recent episode')
+    source_descriptions: list[str] = Field(
+        description='Unique source descriptions', default_factory=list
+    )
+
+    async def save(self, driver: GraphDriver):
+        session_data: dict[str, Any] = {
+            'uuid': self.uuid,
+            'name': self.name,
+            'session_id': self.session_id,
+            'group_id': self.group_id,
+            'summary': self.summary,
+            'episode_count': self.episode_count,
+            'first_episode_date': self.first_episode_date,
+            'last_episode_date': self.last_episode_date,
+            'source_descriptions': self.source_descriptions,
+            'created_at': self.created_at,
+        }
+
+        result = await driver.execute_query(
+            get_session_node_save_query(driver.provider),
+            **session_data,
+        )
+
+        logger.debug(f'Saved SessionNode to Graph: {self.uuid} (session_id: {self.session_id})')
+
+        return result
+
+    @classmethod
+    async def get_by_session_id(cls, driver: GraphDriver, group_id: str, session_id: str):
+        """Retrieve a session node by session_id and group_id."""
+        records, _, _ = await driver.execute_query(
+            """
+            MATCH (s:Session {session_id: $session_id, group_id: $group_id})
+            RETURN
+            """
+            + (
+                SESSION_NODE_RETURN_NEPTUNE
+                if driver.provider == GraphProvider.NEPTUNE
+                else SESSION_NODE_RETURN
+            ),
+            session_id=session_id,
+            group_id=group_id,
+            routing_='r',
+        )
+
+        if len(records) == 0:
+            return None
+
+        return get_session_node_from_record(records[0])
+
+    @classmethod
+    async def get_by_uuid(cls, driver: GraphDriver, uuid: str):
+        """Retrieve a session node by UUID."""
+        records, _, _ = await driver.execute_query(
+            """
+            MATCH (s:Session {uuid: $uuid})
+            RETURN
+            """
+            + (
+                SESSION_NODE_RETURN_NEPTUNE
+                if driver.provider == GraphProvider.NEPTUNE
+                else SESSION_NODE_RETURN
+            ),
+            uuid=uuid,
+            routing_='r',
+        )
+
+        if len(records) == 0:
+            raise NodeNotFoundError(uuid)
+
+        return get_session_node_from_record(records[0])
+
+
 class CommunityNode(Node):
     name_embedding: list[float] | None = Field(default=None, description='embedding of the name')
     summary: str = Field(description='region summary of member nodes', default_factory=str)
@@ -904,6 +988,42 @@ def get_community_node_from_record(record: Any) -> CommunityNode:
         name_embedding=record['name_embedding'],
         created_at=parse_db_date(record['created_at']),  # type: ignore
         summary=record['summary'],
+    )
+
+
+def get_session_node_from_record(record: Any) -> SessionNode:
+    """Parse a SessionNode from a database record."""
+    created_at = parse_db_date(record['created_at'])
+    first_episode_date = parse_db_date(record['first_episode_date'])
+    last_episode_date = parse_db_date(record['last_episode_date'])
+
+    if created_at is None:
+        raise ValueError(f'created_at cannot be None for session {record.get("uuid", "unknown")}')
+    if first_episode_date is None:
+        raise ValueError(
+            f'first_episode_date cannot be None for session {record.get("uuid", "unknown")}'
+        )
+    if last_episode_date is None:
+        raise ValueError(
+            f'last_episode_date cannot be None for session {record.get("uuid", "unknown")}'
+        )
+
+    source_descriptions = record.get('source_descriptions', [])
+    # Handle case where source_descriptions might be a string (from database)
+    if isinstance(source_descriptions, str):
+        source_descriptions = [source_descriptions] if source_descriptions else []
+
+    return SessionNode(
+        uuid=record['uuid'],
+        name=record['name'],
+        session_id=record['session_id'],
+        group_id=record['group_id'],
+        created_at=created_at,
+        summary=record.get('summary', ''),
+        episode_count=record.get('episode_count', 0),
+        first_episode_date=first_episode_date,
+        last_episode_date=last_episode_date,
+        source_descriptions=source_descriptions,
     )
 
 

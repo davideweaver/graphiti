@@ -333,3 +333,72 @@ COMMUNITY_NODE_RETURN_NEPTUNE = """
     n.summary AS summary,
     n.created_at AS created_at
 """
+
+
+def get_session_node_save_query(provider: GraphProvider) -> str:
+    match provider:
+        case GraphProvider.NEPTUNE:
+            return """
+                MERGE (n:Session {session_id: $session_id, group_id: $group_id})
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
+                source_descriptions: join([x IN coalesce($source_descriptions, []) | toString(x) ], '|'), created_at: $created_at}
+                RETURN n.uuid AS uuid
+            """
+        case GraphProvider.KUZU:
+            return """
+                MERGE (n:Session {session_id: $session_id, group_id: $group_id})
+                SET
+                    n.uuid = $uuid,
+                    n.name = $name,
+                    n.summary = $summary,
+                    n.episode_count = $episode_count,
+                    n.first_episode_date = $first_episode_date,
+                    n.last_episode_date = $last_episode_date,
+                    n.source_descriptions = $source_descriptions,
+                    n.created_at = $created_at
+                RETURN n.uuid AS uuid
+            """
+        case GraphProvider.FALKORDB:
+            return """
+                MERGE (n:Session {session_id: $session_id, group_id: $group_id})
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
+                source_descriptions: $source_descriptions, created_at: $created_at}
+                RETURN n.uuid AS uuid
+            """
+        case _:  # Neo4j
+            return """
+                MERGE (n:Session {session_id: $session_id, group_id: $group_id})
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
+                source_descriptions: $source_descriptions, created_at: $created_at}
+                RETURN n.uuid AS uuid
+            """
+
+
+SESSION_NODE_RETURN = """
+    s.uuid AS uuid,
+    s.name AS name,
+    s.session_id AS session_id,
+    s.group_id AS group_id,
+    s.created_at AS created_at,
+    s.summary AS summary,
+    s.episode_count AS episode_count,
+    s.first_episode_date AS first_episode_date,
+    s.last_episode_date AS last_episode_date,
+    s.source_descriptions AS source_descriptions
+"""
+
+SESSION_NODE_RETURN_NEPTUNE = """
+    s.uuid AS uuid,
+    s.name AS name,
+    s.session_id AS session_id,
+    s.group_id AS group_id,
+    s.created_at AS created_at,
+    s.summary AS summary,
+    s.episode_count AS episode_count,
+    s.first_episode_date AS first_episode_date,
+    s.last_episode_date AS last_episode_date,
+    split(s.source_descriptions, "|") AS source_descriptions
+"""

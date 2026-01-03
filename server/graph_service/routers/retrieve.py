@@ -346,7 +346,7 @@ async def list_sessions(
     count_result, _, _ = await graphiti.driver.execute_query(count_query, **query_params)
     total_count = count_result[0]['total'] if count_result else 0
 
-    # Fetch sessions with metadata
+    # Fetch sessions with metadata, optionally joining with SessionNode for summaries
     sessions_query = f"""
         MATCH (e:Episodic)
         WHERE {where_query}
@@ -355,8 +355,9 @@ async def list_sessions(
              min(e.valid_at) AS first_episode_date,
              max(e.valid_at) AS last_episode_date,
              collect(DISTINCT e.source_description) AS source_descriptions
+        OPTIONAL MATCH (s:Session {{session_id: session_id, group_id: $group_id}})
         RETURN session_id, episode_count, first_episode_date,
-               last_episode_date, source_descriptions
+               last_episode_date, source_descriptions, s.summary AS summary
         ORDER BY last_episode_date {order_direction}
         SKIP $offset
         LIMIT $limit
@@ -376,6 +377,7 @@ async def list_sessions(
                 first_episode_date=parse_db_date(record['first_episode_date']),
                 last_episode_date=parse_db_date(record['last_episode_date']),
                 source_descriptions=record['source_descriptions'],
+                summary=record.get('summary'),
             )
         )
 

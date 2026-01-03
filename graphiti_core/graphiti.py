@@ -820,6 +820,51 @@ class Graphiti:
                         max_coroutines=self.max_coroutines,
                     )
 
+                # Update session summary if session_id provided
+                if session_id:
+                    try:
+                        from graphiti_core.utils.maintenance.session_operations import (
+                            get_or_create_session_node,
+                            link_episode_to_session,
+                            update_session_summary,
+                        )
+
+                        # Get or create session node
+                        session_node = await get_or_create_session_node(
+                            driver=self.driver,
+                            group_id=group_id,
+                            session_id=session_id,
+                            episode_time=reference_time,
+                            source_description=source_description,
+                        )
+
+                        # Update summary with new episode
+                        session_node = await update_session_summary(
+                            llm_client=self.llm_client,
+                            session_node=session_node,
+                            new_episode=episode,
+                        )
+
+                        # Save updated session node
+                        await session_node.save(self.driver)
+
+                        # Link episode to session
+                        await link_episode_to_session(
+                            driver=self.driver,
+                            episode_uuid=episode.uuid,
+                            session_uuid=session_node.uuid,
+                        )
+
+                        logger.debug(
+                            f'Updated session {session_id}: episode_count={session_node.episode_count}, summary="{session_node.summary}"'
+                        )
+
+                    except Exception as e:
+                        # Don't block episode ingestion if session update fails
+                        logger.error(
+                            f'Failed to update session {session_id} for episode {episode.uuid}: {type(e).__name__}: {e}'
+                        )
+
                 end = time()
 
                 # Add span attributes

@@ -70,6 +70,7 @@ class SessionResponse(BaseModel):
     first_episode_date: datetime
     last_episode_date: datetime
     source_descriptions: list[str]
+    summary: str | None = None
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}

@@ -32,6 +32,8 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
             'CREATE INDEX FOR (n:Entity) ON (n.uuid, n.group_id, n.name, n.created_at)',
             # Episodic node
             'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at, n.session_id)',
+            # Session node
+            'CREATE INDEX FOR (n:Session) ON (n.uuid, n.session_id, n.group_id, n.last_episode_date)',
             # Community node
             'CREATE INDEX FOR (n:Community) ON (n.uuid)',
             # RELATES_TO edge
@@ -48,12 +50,14 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
     return [
         'CREATE INDEX entity_uuid IF NOT EXISTS FOR (n:Entity) ON (n.uuid)',
         'CREATE INDEX episode_uuid IF NOT EXISTS FOR (n:Episodic) ON (n.uuid)',
+        'CREATE INDEX session_uuid IF NOT EXISTS FOR (n:Session) ON (n.uuid)',
         'CREATE INDEX community_uuid IF NOT EXISTS FOR (n:Community) ON (n.uuid)',
         'CREATE INDEX relation_uuid IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.uuid)',
         'CREATE INDEX mention_uuid IF NOT EXISTS FOR ()-[e:MENTIONS]-() ON (e.uuid)',
         'CREATE INDEX has_member_uuid IF NOT EXISTS FOR ()-[e:HAS_MEMBER]-() ON (e.uuid)',
         'CREATE INDEX entity_group_id IF NOT EXISTS FOR (n:Entity) ON (n.group_id)',
         'CREATE INDEX episode_group_id IF NOT EXISTS FOR (n:Episodic) ON (n.group_id)',
+        'CREATE INDEX session_group_id IF NOT EXISTS FOR (n:Session) ON (n.group_id)',
         'CREATE INDEX community_group_id IF NOT EXISTS FOR (n:Community) ON (n.group_id)',
         'CREATE INDEX relation_group_id IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.group_id)',
         'CREATE INDEX mention_group_id IF NOT EXISTS FOR ()-[e:MENTIONS]-() ON (e.group_id)',
@@ -62,6 +66,8 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         'CREATE INDEX created_at_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.created_at)',
         'CREATE INDEX valid_at_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.valid_at)',
         'CREATE INDEX session_id_episodic_index IF NOT EXISTS FOR (n:Episodic) ON (n.session_id)',
+        'CREATE INDEX session_id_session_index IF NOT EXISTS FOR (n:Session) ON (n.session_id)',
+        'CREATE INDEX last_episode_date_session_index IF NOT EXISTS FOR (n:Session) ON (n.last_episode_date)',
         'CREATE INDEX name_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.name)',
         'CREATE INDEX created_at_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.created_at)',
         'CREATE INDEX expired_at_edge_index IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.expired_at)',
