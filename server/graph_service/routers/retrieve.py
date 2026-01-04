@@ -6,6 +6,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
+from graphiti_core.search.search_filters import (  # type: ignore
+    ComparisonOperator,
+    DateFilter,
+    SearchFilters,
+)
 
 from graph_service.dto import (
     DaySessionCount,
@@ -36,10 +41,29 @@ async def search(
     query: SearchQuery,
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
 ):
+    # Build search filters for date range
+    search_filter = SearchFilters()
+    if query.start_date or query.end_date:
+        date_filters = []
+        if query.start_date:
+            date_filters.append(
+                DateFilter(
+                    date=query.start_date, comparison_operator=ComparisonOperator.greater_than_equal
+                )
+            )
+        if query.end_date:
+            date_filters.append(
+                DateFilter(
+                    date=query.end_date, comparison_operator=ComparisonOperator.less_than_equal
+                )
+            )
+        search_filter.valid_at = [date_filters]
+
     relevant_edges = await graphiti.search(
         group_ids=[query.group_id],  # Changed from query.group_ids
         query=query.query,
         num_results=query.max_facts,
+        search_filter=search_filter,
     )
     facts = [get_fact_result_from_edge(edge) for edge in relevant_edges]
     return SearchResults(

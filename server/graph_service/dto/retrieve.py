@@ -10,6 +10,12 @@ class SearchQuery(BaseModel):
     group_id: str = Field(..., description='The group id for the memories to search')
     query: str
     max_facts: int = Field(default=10, description='The maximum number of facts to retrieve')
+    start_date: datetime | None = Field(
+        None, description='Filter facts with valid_at >= this datetime (ISO 8601)'
+    )
+    end_date: datetime | None = Field(
+        None, description='Filter facts with valid_at <= this datetime (ISO 8601)'
+    )
 
 
 class FactResult(BaseModel):
