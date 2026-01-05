@@ -44,6 +44,7 @@ from graphiti_core.models.nodes.node_db_queries import (
     get_entity_node_return_query,
     get_entity_node_save_query,
     get_episode_node_save_query,
+    get_project_node_save_query,
     get_session_node_save_query,
 )
 from graphiti_core.utils.datetime_utils import utc_now
@@ -310,6 +311,10 @@ class EpisodicNode(Node):
         default=None,
         description='session UUID for grouping related episodes',
     )
+    project_name: str | None = Field(
+        default=None,
+        description='project name (lowercased) for grouping related episodes',
+    )
 
     async def save(self, driver: GraphDriver):
         if driver.graph_operations_interface:
@@ -326,6 +331,7 @@ class EpisodicNode(Node):
             'valid_at': self.valid_at,
             'source': self.source.value,
             'session_id': self.session_id,
+            'project_name': self.project_name,
         }
 
         result = await driver.execute_query(
@@ -782,6 +788,80 @@ class SessionNode(Node):
             raise NodeNotFoundError(uuid)
 
         return get_session_node_from_record(records[0])
+
+
+class ProjectNode(Node):
+    """Minimal node representing a project. Metadata computed via queries."""
+
+    name: str = Field(description='Project name (lowercased)')
+    project_path: str | None = Field(default=None, description='File system path of the project')
+
+    async def save(self, driver: GraphDriver):
+        project_data: dict[str, Any] = {
+            'uuid': self.uuid,
+            'name': self.name,
+            'group_id': self.group_id,
+            'created_at': self.created_at,
+            'project_path': self.project_path,
+        }
+
+        result = await driver.execute_query(
+            get_project_node_save_query(driver.provider),
+            **project_data,
+        )
+
+        logger.debug(f'Saved ProjectNode to Graph: {self.uuid} (name: {self.name})')
+
+        return result
+
+    @classmethod
+    async def get_by_name(cls, driver: GraphDriver, group_id: str, name: str):
+        """Retrieve a project node by name and group_id."""
+        records, _, _ = await driver.execute_query(
+            """
+            MATCH (p:Project {name: $name, group_id: $group_id})
+            RETURN p.uuid AS uuid, p.name AS name, p.group_id AS group_id,
+                   p.created_at AS created_at, p.project_path AS project_path
+            """,
+            name=name,
+            group_id=group_id,
+            routing_='r',
+        )
+
+        if len(records) == 0:
+            return None
+
+        return ProjectNode(
+            uuid=records[0]['uuid'],
+            name=records[0]['name'],
+            group_id=records[0]['group_id'],
+            created_at=parse_db_date(records[0]['created_at']),
+            project_path=records[0].get('project_path'),
+        )
+
+    @classmethod
+    async def get_by_uuid(cls, driver: GraphDriver, uuid: str):
+        """Retrieve a project node by UUID."""
+        records, _, _ = await driver.execute_query(
+            """
+            MATCH (p:Project {uuid: $uuid})
+            RETURN p.uuid AS uuid, p.name AS name, p.group_id AS group_id,
+                   p.created_at AS created_at, p.project_path AS project_path
+            """,
+            uuid=uuid,
+            routing_='r',
+        )
+
+        if len(records) == 0:
+            raise NodeNotFoundError(uuid)
+
+        return ProjectNode(
+            uuid=records[0]['uuid'],
+            name=records[0]['name'],
+            group_id=records[0]['group_id'],
+            created_at=parse_db_date(records[0]['created_at']),
+            project_path=records[0].get('project_path'),
+        )
 
 
 class CommunityNode(Node):

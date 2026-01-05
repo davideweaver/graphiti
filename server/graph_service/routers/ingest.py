@@ -122,6 +122,22 @@ async def add_messages(
             session_id = m.session_id
             source_desc = m.source_description
 
+        # Extract or use project_name
+        # Priority: 1) Explicit project_name in payload, 2) Parse from source_description
+        if m.project_name is not None:
+            # Use provided project name, lowercase it
+            project_name = m.project_name.lower()
+        elif source_desc:
+            # Try to extract from source_description
+            from graphiti_core.utils.project_utils import extract_project_name
+
+            extracted_project, cleaned_source = extract_project_name(source_desc)
+            project_name = extracted_project  # Already lowercased by extract_project_name
+            # Update source_desc to cleaned version (without project suffix)
+            source_desc = cleaned_source
+        else:
+            project_name = None
+
         try:
             await graphiti.add_episode_with_events(
                 uuid=m.uuid,
@@ -132,6 +148,8 @@ async def add_messages(
                 source=EpisodeType.message,
                 source_description=source_desc,
                 session_id=session_id,
+                project_name=project_name,
+                project_path=m.project_path,
                 entity_types=ENTITY_TYPES,
             )
             logger.debug('Task - add_episode_with_events() completed successfully')

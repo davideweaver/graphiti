@@ -25,7 +25,7 @@ def get_episode_node_save_query(provider: GraphProvider) -> str:
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: join([x IN coalesce($entity_edges, []) | toString(x) ], '|'), created_at: $created_at, valid_at: $valid_at, session_id: $session_id}
+                entity_edges: join([x IN coalesce($entity_edges, []) | toString(x) ], '|'), created_at: $created_at, valid_at: $valid_at, session_id: $session_id, project_name: $project_name}
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.KUZU:
@@ -40,21 +40,22 @@ def get_episode_node_save_query(provider: GraphProvider) -> str:
                     n.content = $content,
                     n.valid_at = $valid_at,
                     n.entity_edges = $entity_edges,
-                    n.session_id = $session_id
+                    n.session_id = $session_id,
+                    n.project_name = $project_name
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.FALKORDB:
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at, session_id: $session_id}
+                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at, session_id: $session_id, project_name: $project_name}
                 RETURN n.uuid AS uuid
             """
         case _:  # Neo4j
             return """
                 MERGE (n:Episodic {uuid: $uuid})
                 SET n = {uuid: $uuid, name: $name, group_id: $group_id, source_description: $source_description, source: $source, content: $content,
-                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at, session_id: $session_id}
+                entity_edges: $entity_edges, created_at: $created_at, valid_at: $valid_at, session_id: $session_id, project_name: $project_name}
                 RETURN n.uuid AS uuid
             """
 
@@ -113,7 +114,8 @@ EPISODIC_NODE_RETURN = """
     e.content AS content,
     e.valid_at AS valid_at,
     e.entity_edges AS entity_edges,
-    e.session_id AS session_id
+    e.session_id AS session_id,
+    e.project_name AS project_name
 """
 
 EPISODIC_NODE_RETURN_NEPTUNE = """
@@ -126,7 +128,8 @@ EPISODIC_NODE_RETURN_NEPTUNE = """
     e.source_description AS source_description,
     e.source AS source,
     split(e.entity_edges, ",") AS entity_edges,
-    e.session_id AS session_id
+    e.session_id AS session_id,
+    e.project_name AS project_name
 """
 
 
@@ -402,3 +405,38 @@ SESSION_NODE_RETURN_NEPTUNE = """
     s.last_episode_date AS last_episode_date,
     split(s.source_descriptions, "|") AS source_descriptions
 """
+
+
+def get_project_node_save_query(provider: GraphProvider) -> str:
+    """
+    Generate project node save query.
+    Uses (name, group_id) as unique key.
+    """
+    match provider:
+        case GraphProvider.NEPTUNE:
+            return """
+                MERGE (n:Project {name: $name, group_id: $group_id})
+                SET n = {uuid: $uuid, name: $name, group_id: $group_id, created_at: $created_at, project_path: $project_path}
+                RETURN n.uuid AS uuid
+            """
+        case GraphProvider.KUZU:
+            return """
+                MERGE (n:Project {name: $name, group_id: $group_id})
+                SET
+                    n.uuid = $uuid,
+                    n.created_at = $created_at,
+                    n.project_path = $project_path
+                RETURN n.uuid AS uuid
+            """
+        case GraphProvider.FALKORDB:
+            return """
+                MERGE (n:Project {name: $name, group_id: $group_id})
+                SET n = {uuid: $uuid, name: $name, group_id: $group_id, created_at: $created_at, project_path: $project_path}
+                RETURN n.uuid AS uuid
+            """
+        case _:  # Neo4j
+            return """
+                MERGE (n:Project {name: $name, group_id: $group_id})
+                SET n = {uuid: $uuid, name: $name, group_id: $group_id, created_at: $created_at, project_path: $project_path}
+                RETURN n.uuid AS uuid
+            """

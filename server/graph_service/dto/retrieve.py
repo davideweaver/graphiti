@@ -77,6 +77,8 @@ class SessionResponse(BaseModel):
     last_episode_date: datetime
     source_descriptions: list[str]
     summary: str | None = None
+    project_name: str | None = None
+    first_episode_preview: str | None = None
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
@@ -96,4 +98,43 @@ class DaySessionCount(BaseModel):
 
 class SessionStatsByDayResponse(BaseModel):
     stats: list[DaySessionCount]
+    total_days: int
+
+
+class ProjectResponse(BaseModel):
+    """Response model for a single project."""
+
+    uuid: str
+    name: str
+    created_at: datetime
+    project_path: str | None = None
+    episode_count: int
+    session_count: int
+    first_episode_date: datetime | None
+    last_episode_date: datetime | None
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
+class ProjectListResponse(BaseModel):
+    """Response model for paginated list of projects."""
+
+    projects: list[ProjectResponse]
+    total: int
+    has_more: bool
+    cursor: str | None = None
+
+
+class DayProjectActivity(BaseModel):
+    """Project activity for a single day."""
+
+    date: str  # ISO date format YYYY-MM-DD
+    episode_count: int
+
+
+class ProjectStatsByDayResponse(BaseModel):
+    """Response model for project activity statistics by day."""
+
+    stats: list[DayProjectActivity]
     total_days: int

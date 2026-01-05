@@ -29,3 +29,9 @@ class Message(BaseModel):
     session_id: str | None = Field(
         default=None, description='The session UUID for grouping related episodes'
     )
+    project_name: str | None = Field(
+        default=None, description='The project name (will be lowercased) for grouping related episodes'
+    )
+    project_path: str | None = Field(
+        default=None, description='The file system path of the project'
+    )

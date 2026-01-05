@@ -642,6 +642,8 @@ class Graphiti:
         reference_time: datetime,
         source: EpisodeType = EpisodeType.message,
         session_id: str | None = None,
+        project_name: str | None = None,
+        project_path: str | None = None,
         group_id: str | None = None,
         uuid: str | None = None,
         update_communities: bool = False,
@@ -753,6 +755,7 @@ class Graphiti:
                         content=episode_body,
                         source_description=source_description,
                         session_id=session_id,
+                        project_name=project_name,
                         created_at=now,
                         valid_at=reference_time,
                     )
@@ -863,6 +866,51 @@ class Graphiti:
                         # Don't block episode ingestion if session update fails
                         logger.error(
                             f'Failed to update session {session_id} for episode {episode.uuid}: {type(e).__name__}: {e}'
+                        )
+
+                # Update project if project_name provided
+                if project_name:
+                    try:
+                        from graphiti_core.utils.maintenance.project_operations import (
+                            get_or_create_project_node,
+                            link_episode_to_project,
+                            link_session_to_project,
+                        )
+
+                        # Get or create project node
+                        project_node = await get_or_create_project_node(
+                            driver=self.driver,
+                            group_id=group_id,
+                            project_name=project_name,
+                            project_path=project_path,
+                        )
+
+                        # Save project node
+                        await project_node.save(self.driver)
+
+                        # Link episode to project
+                        await link_episode_to_project(
+                            driver=self.driver,
+                            episode_uuid=episode.uuid,
+                            project_uuid=project_node.uuid,
+                        )
+
+                        # Link session to project if session exists
+                        if session_id and 'session_node' in locals():
+                            await link_session_to_project(
+                                driver=self.driver,
+                                session_uuid=session_node.uuid,
+                                project_uuid=project_node.uuid,
+                            )
+
+                        logger.debug(
+                            f'Linked episode {episode.uuid} to project {project_name}'
+                        )
+
+                    except Exception as e:
+                        # Don't block episode ingestion if project update fails
+                        logger.error(
+                            f'Failed to update project {project_name} for episode {episode.uuid}: {type(e).__name__}: {e}'
                         )
 
                 end = time()
