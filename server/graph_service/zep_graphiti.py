@@ -336,7 +336,17 @@ async def get_graphiti_from_query(group_id: str = Query(...)) -> ZepGraphiti:
     return await get_or_create_graphiti_instance(group_id)
 
 
-def get_fact_result_from_edge(edge: EntityEdge):
+def get_fact_result_from_edge(edge: EntityEdge, similarity_score: float | None = None):
+    """
+    Convert an EntityEdge to a FactResult.
+
+    Args:
+        edge: The EntityEdge to convert
+        similarity_score: Optional similarity/reranker score (0.0-1.0) indicating relevance
+
+    Returns:
+        FactResult with all edge attributes and optional similarity score
+    """
     return FactResult(
         uuid=edge.uuid,
         name=edge.name,
@@ -345,6 +355,7 @@ def get_fact_result_from_edge(edge: EntityEdge):
         invalid_at=edge.invalid_at,
         created_at=edge.created_at,
         expired_at=edge.expired_at,
+        similarity_score=similarity_score,
     )
 
 

@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
+from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF  # type: ignore
 from graphiti_core.search.search_filters import (  # type: ignore
     ComparisonOperator,
     DateFilter,
@@ -82,13 +83,25 @@ async def search(
             )
         search_filter.valid_at = [date_filters]
 
-    relevant_edges = await graphiti.search(
-        group_ids=[query.group_id],  # Changed from query.group_ids
+    # Use search_() for full SearchResults with similarity scores
+    # (search() only returns edges, discarding scores)
+    search_results = await graphiti.search_(
         query=query.query,
-        num_results=query.max_facts,
+        config=EDGE_HYBRID_SEARCH_RRF,  # Hybrid search with RRF reranking
+        group_ids=[query.group_id],
         search_filter=search_filter,
     )
-    facts = [get_fact_result_from_edge(edge) for edge in relevant_edges]
+
+    # Extract edges and their corresponding similarity scores
+    edges = search_results.edges
+    scores = search_results.edge_reranker_scores
+
+    # Zip edges with scores (handle case where scores list might be empty or shorter)
+    facts = []
+    for idx, edge in enumerate(edges):
+        score = scores[idx] if idx < len(scores) else None
+        facts.append(get_fact_result_from_edge(edge, score))
+
     return SearchResults(
         facts=facts,
     )
@@ -136,12 +149,22 @@ async def get_memory(
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
 ):
     combined_query = compose_query_from_messages(request.messages)
-    result = await graphiti.search(
-        group_ids=[request.group_id],
+    search_results = await graphiti.search_(
         query=combined_query,
-        num_results=request.max_facts,
+        config=EDGE_HYBRID_SEARCH_RRF,  # Hybrid search with RRF reranking
+        group_ids=[request.group_id],
     )
-    facts = [get_fact_result_from_edge(edge) for edge in result]
+
+    # Extract edges and scores
+    edges = search_results.edges
+    scores = search_results.edge_reranker_scores
+
+    # Convert to facts with scores
+    facts = []
+    for idx, edge in enumerate(edges):
+        score = scores[idx] if idx < len(scores) else None
+        facts.append(get_fact_result_from_edge(edge, score))
+
     return GetMemoryResponse(facts=facts)
 
 
