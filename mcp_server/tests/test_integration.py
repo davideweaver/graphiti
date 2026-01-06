@@ -177,7 +177,7 @@ class MCPIntegrationTest:
             'search_memory_nodes',
             {
                 'query': 'Acme Corp product launch',
-                'group_ids': [self.test_group_id],
+                'group_id': self.test_group_id,
                 'max_nodes': 5,
             },
         )
@@ -196,7 +196,7 @@ class MCPIntegrationTest:
             'search_memory_facts',
             {
                 'query': 'company products software',
-                'group_ids': [self.test_group_id],
+                'group_id': self.test_group_id,
                 'max_facts': 5,
             },
         )
@@ -247,7 +247,7 @@ class MCPIntegrationTest:
         print('   Testing invalid group_id...')
         result = await self.call_mcp_tool(
             'search_memory_nodes',
-            {'query': 'nonexistent data', 'group_ids': ['nonexistent_group'], 'max_nodes': 5},
+            {'query': 'nonexistent data', 'group_id': 'nonexistent_group', 'max_nodes': 5},
         )
 
         # Should not error, just return empty results
@@ -262,7 +262,7 @@ class MCPIntegrationTest:
         # Test empty query
         print('   Testing empty query...')
         result = await self.call_mcp_tool(
-            'search_memory_nodes', {'query': '', 'group_ids': [self.test_group_id], 'max_nodes': 5}
+            'search_memory_nodes', {'query': '', 'group_id': self.test_group_id, 'max_nodes': 5}
         )
 
         if 'error' not in result:

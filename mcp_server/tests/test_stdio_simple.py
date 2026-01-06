@@ -65,7 +65,7 @@ async def test_stdio():
                 print('\n🔍 Testing search_memory_nodes...')
                 result = await session.call_tool(
                     'search_memory_nodes',
-                    {'query': 'test', 'group_ids': ['test_group'], 'limit': 5},
+                    {'query': 'test', 'group_id': 'test_group', 'limit': 5},
                 )
 
                 if result.content:

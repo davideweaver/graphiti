@@ -229,7 +229,7 @@ class GraphitiMCPIntegrationTest:
                 'search_memory_nodes',
                 {
                     'query': 'Acme Corp product launch AI',
-                    'group_ids': [self.test_group_id],
+                    'group_id': self.test_group_id,
                     'max_nodes': 5,
                 },
             )
@@ -261,7 +261,7 @@ class GraphitiMCPIntegrationTest:
                 'search_memory_facts',
                 {
                     'query': 'company products software TechCorp',
-                    'group_ids': [self.test_group_id],
+                    'group_id': self.test_group_id,
                     'max_facts': 5,
                 },
             )
@@ -336,7 +336,7 @@ class GraphitiMCPIntegrationTest:
                 'search_memory_nodes',
                 {
                     'query': 'nonexistent data',
-                    'group_ids': ['nonexistent_group_12345'],
+                    'group_id': 'nonexistent_group_12345',
                     'max_nodes': 5,
                 },
             )
@@ -361,7 +361,7 @@ class GraphitiMCPIntegrationTest:
         try:
             result = await self.call_tool(
                 'search_memory_nodes',
-                {'query': '', 'group_ids': [self.test_group_id], 'max_nodes': 5},
+                {'query': '', 'group_id': self.test_group_id, 'max_nodes': 5},
             )
 
             # Should handle gracefully

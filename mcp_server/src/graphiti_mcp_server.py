@@ -447,7 +447,7 @@ async def add_memory(
 @mcp.tool()
 async def search_nodes(
     query: str,
-    group_ids: list[str] | None = None,
+    group_id: str | None = None,
     max_nodes: int = 10,
     entity_types: list[str] | None = None,
 ) -> NodeSearchResponse | ErrorResponse:
@@ -455,7 +455,7 @@ async def search_nodes(
 
     Args:
         query: The search query
-        group_ids: Optional list of group IDs to filter results
+        group_id: Optional group ID to filter results (defaults to configured group)
         max_nodes: Maximum number of nodes to return (default: 10)
         entity_types: Optional list of entity type names to filter by
     """
@@ -467,14 +467,9 @@ async def search_nodes(
     try:
         client = await graphiti_service.get_client()
 
-        # Use the provided group_ids or fall back to the default from config if none provided
-        effective_group_ids = (
-            group_ids
-            if group_ids is not None
-            else [config.graphiti.group_id]
-            if config.graphiti.group_id
-            else []
-        )
+        # Use the provided group_id or fall back to the default from config if none provided
+        effective_group_id = group_id if group_id is not None else config.graphiti.group_id
+        effective_group_ids = [effective_group_id] if effective_group_id else []
 
         # Create search filters
         search_filters = SearchFilters(
@@ -527,7 +522,7 @@ async def search_nodes(
 @mcp.tool()
 async def search_memory_facts(
     query: str,
-    group_ids: list[str] | None = None,
+    group_id: str | None = None,
     max_facts: int = 10,
     center_node_uuid: str | None = None,
 ) -> FactSearchResponse | ErrorResponse:
@@ -535,7 +530,7 @@ async def search_memory_facts(
 
     Args:
         query: The search query
-        group_ids: Optional list of group IDs to filter results
+        group_id: Optional group ID to filter results (defaults to configured group)
         max_facts: Maximum number of facts to return (default: 10)
         center_node_uuid: Optional UUID of a node to center the search around
     """
@@ -551,14 +546,9 @@ async def search_memory_facts(
 
         client = await graphiti_service.get_client()
 
-        # Use the provided group_ids or fall back to the default from config if none provided
-        effective_group_ids = (
-            group_ids
-            if group_ids is not None
-            else [config.graphiti.group_id]
-            if config.graphiti.group_id
-            else []
-        )
+        # Use the provided group_id or fall back to the default from config if none provided
+        effective_group_id = group_id if group_id is not None else config.graphiti.group_id
+        effective_group_ids = [effective_group_id] if effective_group_id else []
 
         relevant_edges = await client.search(
             group_ids=effective_group_ids,
@@ -659,13 +649,13 @@ async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
 
 @mcp.tool()
 async def get_episodes(
-    group_ids: list[str] | None = None,
+    group_id: str | None = None,
     max_episodes: int = 10,
 ) -> EpisodeSearchResponse | ErrorResponse:
     """Get episodes from the graph memory.
 
     Args:
-        group_ids: Optional list of group IDs to filter results
+        group_id: Optional group ID to filter results (defaults to configured group)
         max_episodes: Maximum number of episodes to return (default: 10)
     """
     global graphiti_service
@@ -676,14 +666,9 @@ async def get_episodes(
     try:
         client = await graphiti_service.get_client()
 
-        # Use the provided group_ids or fall back to the default from config if none provided
-        effective_group_ids = (
-            group_ids
-            if group_ids is not None
-            else [config.graphiti.group_id]
-            if config.graphiti.group_id
-            else []
-        )
+        # Use the provided group_id or fall back to the default from config if none provided
+        effective_group_id = group_id if group_id is not None else config.graphiti.group_id
+        effective_group_ids = [effective_group_id] if effective_group_id else []
 
         # Get episodes from the driver directly
         from graphiti_core.nodes import EpisodicNode
@@ -693,8 +678,7 @@ async def get_episodes(
                 client.driver, effective_group_ids, limit=max_episodes
             )
         else:
-            # If no group IDs, we need to use a different approach
-            # For now, return empty list when no group IDs specified
+            # If no group ID specified, return empty list
             episodes = []
 
         if not episodes:
@@ -726,11 +710,11 @@ async def get_episodes(
 
 
 @mcp.tool()
-async def clear_graph(group_ids: list[str] | None = None) -> SuccessResponse | ErrorResponse:
-    """Clear all data from the graph for specified group IDs.
+async def clear_graph(group_id: str | None = None) -> SuccessResponse | ErrorResponse:
+    """Clear all data from the graph for specified group ID.
 
     Args:
-        group_ids: Optional list of group IDs to clear. If not provided, clears the default group.
+        group_id: Optional group ID to clear (defaults to configured group)
     """
     global graphiti_service
 
@@ -740,19 +724,17 @@ async def clear_graph(group_ids: list[str] | None = None) -> SuccessResponse | E
     try:
         client = await graphiti_service.get_client()
 
-        # Use the provided group_ids or fall back to the default from config if none provided
-        effective_group_ids = (
-            group_ids or [config.graphiti.group_id] if config.graphiti.group_id else []
-        )
+        # Use the provided group_id or fall back to the default from config if none provided
+        effective_group_id = group_id if group_id is not None else config.graphiti.group_id
 
-        if not effective_group_ids:
-            return ErrorResponse(error='No group IDs specified for clearing')
+        if not effective_group_id:
+            return ErrorResponse(error='No group ID specified for clearing')
 
-        # Clear data for the specified group IDs
-        await clear_data(client.driver, group_ids=effective_group_ids)
+        # Clear data for the specified group ID
+        await clear_data(client.driver, group_ids=[effective_group_id])
 
         return SuccessResponse(
-            message=f'Graph data cleared successfully for group IDs: {", ".join(effective_group_ids)}'
+            message=f'Graph data cleared successfully for group ID: {effective_group_id}'
         )
     except Exception as e:
         error_msg = str(e)

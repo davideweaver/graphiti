@@ -134,7 +134,7 @@ class MCPTransportTester:
         try:
             result = await self.session.call_tool(
                 'search_memory_nodes',
-                {'query': 'test episode', 'group_ids': [self.test_group_id], 'limit': 5},
+                {'query': 'test episode', 'group_id': self.test_group_id, 'limit': 5},
             )
 
             if result.content:
@@ -160,7 +160,7 @@ class MCPTransportTester:
 
         try:
             result = await self.session.call_tool(
-                'get_episodes', {'group_ids': [self.test_group_id], 'limit': 10}
+                'get_episodes', {'group_id': self.test_group_id, 'limit': 10}
             )
 
             if result.content:

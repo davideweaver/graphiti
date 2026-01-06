@@ -94,7 +94,7 @@ async def test_http_transport(base_url: str = 'http://localhost:8000'):
             try:
                 result = await session.call_tool(
                     'search_memory_nodes',
-                    {'query': 'integration test episode', 'group_ids': [test_group_id], 'limit': 5},
+                    {'query': 'integration test episode', 'group_id': test_group_id, 'limit': 5},
                 )
 
                 if result.content and result.content[0].text:
@@ -115,7 +115,7 @@ async def test_http_transport(base_url: str = 'http://localhost:8000'):
             print('\n📚 Test 4: Getting episodes...')
             try:
                 result = await session.call_tool(
-                    'get_episodes', {'group_ids': [test_group_id], 'limit': 10}
+                    'get_episodes', {'group_id': test_group_id, 'limit': 10}
                 )
 
                 if result.content and result.content[0].text:
