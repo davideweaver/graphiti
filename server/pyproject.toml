@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
-    "graphiti-core[falkordb] @ file://{project_root}/..",
+    # graphiti-core is installed system-wide as editable package in Docker
     "pydantic-settings>=2.4.0",
     "uvicorn[standard]>=0.30.6",
     "httpx>=0.28.1",
