@@ -8,17 +8,17 @@
 server:
   transport: "http"  # Options: stdio, sse (deprecated), http
   host: "0.0.0.0"
-  port: 8000
+  port: ${MCP_PORT:8000}
   
 llm:
   provider: "openai"  # Options: openai, azure_openai, anthropic, gemini, groq
-  model: "gpt-4o-mini"
+  model: ${OPENAI_MODEL:gpt-4o-mini}
   max_tokens: 4096
   
   providers:
     openai:
       api_key: ${OPENAI_API_KEY}
-      api_url: ${OPENAI_API_URL:https://api.openai.com/v1}
+      api_url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
       organization_id: ${OPENAI_ORGANIZATION_ID:}
       
     azure_openai:
@@ -44,13 +44,13 @@ llm:
 
 embedder:
   provider: "openai"  # Options: openai, azure_openai, gemini, voyage
-  model: "text-embedding-3-small"
-  dimensions: 1536
-  
+  model: ${EMBEDDING_MODEL:text-embedding-3-small}
+  dimensions: ${EMBEDDING_DIM:1536}
+
   providers:
     openai:
       api_key: ${OPENAI_API_KEY}
-      api_url: ${OPENAI_API_URL:https://api.openai.com/v1}
+      api_url: ${EMBEDDING_BASE_URL:${OPENAI_API_URL:https://api.openai.com/v1}}
       organization_id: ${OPENAI_ORGANIZATION_ID:}
       
     azure_openai:

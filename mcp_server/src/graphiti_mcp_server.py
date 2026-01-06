@@ -19,6 +19,7 @@ from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from config.schema import GraphitiConfig, ServerConfig
@@ -31,7 +32,6 @@ from models.response_types import (
     StatusResponse,
     SuccessResponse,
 )
-from services.factories import DatabaseDriverFactory, EmbedderFactory, LLMClientFactory
 from services.queue_service import QueueService
 from utils.formatting import format_fact_result
 
@@ -170,26 +170,65 @@ class GraphitiService:
         self.entity_types = None
 
     async def initialize(self) -> None:
-        """Initialize the Graphiti client with factory-created components."""
+        """Initialize the Graphiti client with direct environment variable configuration."""
         try:
-            # Create clients using factories
-            llm_client = None
-            embedder_client = None
+            # Create LLM client directly from environment variables
+            # Use OpenAIGenericClient for llama.cpp/Ollama compatibility
+            from graphiti_core.llm_client.config import LLMConfig
+            from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 
-            # Create LLM client based on configured provider
-            try:
-                llm_client = LLMClientFactory.create(self.config.llm)
-            except Exception as e:
-                logger.warning(f'Failed to create LLM client: {e}')
+            model_name = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+            llm_config = LLMConfig(
+                api_key=os.getenv('OPENAI_API_KEY', 'not-needed'),
+                model=model_name,
+                base_url=os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+            )
+            llm_timeout = float(os.getenv('LLM_TIMEOUT', '120.0'))
+            max_tokens = int(os.getenv('LLM_MAX_TOKENS', '16384'))
+            llm_client = OpenAIGenericClient(config=llm_config, max_tokens=max_tokens)
+            llm_client.client.timeout = llm_timeout
+            logger.info(
+                f'MCP: Using LLM client with base_url={llm_config.base_url}, model={llm_config.model}'
+            )
 
-            # Create embedder client based on configured provider
-            try:
-                embedder_client = EmbedderFactory.create(self.config.embedder)
-            except Exception as e:
-                logger.warning(f'Failed to create embedder client: {e}')
+            # Create embedder client directly from environment variables
+            from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
-            # Get database configuration
-            db_config = DatabaseDriverFactory.create_config(self.config.database)
+            embedder_config = OpenAIEmbedderConfig(
+                api_key='not-needed',
+                embedding_model=os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small'),
+                embedding_dim=int(os.getenv('EMBEDDING_DIM', '1536')),
+                base_url=os.getenv('EMBEDDING_BASE_URL', 'https://api.openai.com/v1'),
+            )
+            embedding_timeout = float(os.getenv('EMBEDDING_TIMEOUT', '60.0'))
+            embedder_client = OpenAIEmbedder(config=embedder_config)
+            embedder_client.client.timeout = embedding_timeout
+            logger.info(
+                f'MCP: Using embedder: {embedder_config.embedding_model} ({embedder_config.embedding_dim}d) at {embedder_config.base_url}'
+            )
+
+            # Get database configuration from environment variables
+            db_provider = os.getenv('DB_PROVIDER', 'falkordb').lower()
+            if db_provider == 'falkordb':
+                from urllib.parse import urlparse
+
+                falkordb_uri = os.getenv('FALKORDB_URI', 'redis://localhost:6379')
+                parsed = urlparse(falkordb_uri)
+                db_config = {
+                    'provider': 'falkordb',
+                    'host': parsed.hostname or 'localhost',
+                    'port': parsed.port or 6379,
+                    'password': os.getenv('FALKORDB_PASSWORD', ''),
+                    'database': os.getenv('FALKORDB_DATABASE', 'default_db'),
+                }
+            else:
+                db_config = {
+                    'provider': 'neo4j',
+                    'uri': os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
+                    'user': os.getenv('NEO4J_USER', 'neo4j'),
+                    'password': os.getenv('NEO4J_PASSWORD', ''),
+                    'database': os.getenv('NEO4J_DATABASE', 'neo4j'),
+                }
 
             # Build entity types from configuration
             custom_types = None
@@ -212,7 +251,7 @@ class GraphitiService:
 
             # Initialize Graphiti client with appropriate driver
             try:
-                if self.config.database.provider.lower() == 'falkordb':
+                if db_config['provider'] == 'falkordb':
                     # For FalkorDB, create a FalkorDriver instance directly
                     from graphiti_core.driver.falkordb_driver import FalkorDriver
 
@@ -243,7 +282,7 @@ class GraphitiService:
                 # Check for connection errors
                 error_msg = str(db_error).lower()
                 if 'connection refused' in error_msg or 'could not connect' in error_msg:
-                    db_provider = self.config.database.provider
+                    db_provider = db_config['provider']
                     if db_provider.lower() == 'falkordb':
                         raise RuntimeError(
                             f'\n{"=" * 70}\n'
@@ -760,6 +799,21 @@ async def health_check(request) -> JSONResponse:
     return JSONResponse({'status': 'healthy', 'service': 'graphiti-mcp'})
 
 
+@mcp.custom_route('/mcp/', methods=['OPTIONS'])
+async def mcp_options(request) -> JSONResponse:
+    """Handle CORS preflight requests for MCP endpoint."""
+    from starlette.responses import Response
+    return Response(
+        status_code=200,
+        headers={
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Allow-Credentials': 'true',
+        },
+    )
+
+
 async def initialize_server() -> ServerConfig:
     """Parse CLI arguments and initialize the Graphiti server configuration."""
     global config, graphiti_service, queue_service, graphiti_client, semaphore
@@ -910,6 +964,16 @@ async def run_mcp_server():
     """Run the MCP server in the current event loop."""
     # Initialize the server
     mcp_config = await initialize_server()
+
+    # Add CORS middleware before starting (access via _app private attribute)
+    if hasattr(mcp, '_app') and mcp._app is not None:
+        mcp._app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Run the server with configured transport
     logger.info(f'Starting MCP server with transport: {mcp_config.transport}')
