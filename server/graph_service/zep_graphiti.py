@@ -336,16 +336,25 @@ async def get_graphiti_from_query(group_id: str = Query(...)) -> ZepGraphiti:
     return await get_or_create_graphiti_instance(group_id)
 
 
-def get_fact_result_from_edge(edge: EntityEdge, similarity_score: float | None = None):
+def get_fact_result_from_edge(
+    edge: EntityEdge,
+    similarity_score: float | None = None,
+    source_entity: EntityNodeResponse | None = None,
+    target_entity: EntityNodeResponse | None = None,
+    episodes: list | None = None,
+):
     """
     Convert an EntityEdge to a FactResult.
 
     Args:
         edge: The EntityEdge to convert
         similarity_score: Optional similarity/reranker score (0.0-1.0) indicating relevance
+        source_entity: Optional full details of the source entity
+        target_entity: Optional full details of the target entity
+        episodes: Optional list of episodes that created/mentioned this fact
 
     Returns:
-        FactResult with all edge attributes and optional similarity score
+        FactResult with all edge attributes and optional provenance data
     """
     return FactResult(
         uuid=edge.uuid,
@@ -356,6 +365,11 @@ def get_fact_result_from_edge(edge: EntityEdge, similarity_score: float | None =
         created_at=edge.created_at,
         expired_at=edge.expired_at,
         similarity_score=similarity_score,
+        source_node_uuid=edge.source_node_uuid if (source_entity or target_entity or episodes) else None,
+        target_node_uuid=edge.target_node_uuid if (source_entity or target_entity or episodes) else None,
+        source_entity=source_entity,
+        target_entity=target_entity,
+        episodes=episodes,
     )
 
 

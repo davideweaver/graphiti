@@ -18,6 +18,35 @@ class SearchQuery(BaseModel):
     )
 
 
+class EntityNodeResponse(BaseModel):
+    uuid: str
+    name: str
+    group_id: str
+    summary: str
+    labels: list[str]
+    attributes: dict[str, Any]
+    created_at: datetime
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
+class EpisodeResponse(BaseModel):
+    """Episode information for fact provenance."""
+    uuid: str
+    name: str
+    content: str
+    source_description: str
+    session_id: str
+    timestamp: datetime
+    valid_at: datetime
+    created_at: datetime
+    group_id: str
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
 class FactResult(BaseModel):
     uuid: str
     name: str
@@ -29,6 +58,12 @@ class FactResult(BaseModel):
     similarity_score: float | None = Field(
         None, description='Similarity/reranker score for this fact (0.0-1.0, higher is more relevant)'
     )
+    # Provenance fields (optional, only included when requested)
+    source_node_uuid: str | None = Field(None, description='UUID of the source entity in this relationship')
+    target_node_uuid: str | None = Field(None, description='UUID of the target entity in this relationship')
+    source_entity: EntityNodeResponse | None = Field(None, description='Full details of the source entity')
+    target_entity: EntityNodeResponse | None = Field(None, description='Full details of the target entity')
+    episodes: list[EpisodeResponse] | None = Field(None, description='Episodes that created or mentioned this fact')
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
@@ -51,19 +86,6 @@ class GetMemoryRequest(BaseModel):
 
 class GetMemoryResponse(BaseModel):
     facts: list[FactResult] = Field(..., description='The facts that were retrieved from the graph')
-
-
-class EntityNodeResponse(BaseModel):
-    uuid: str
-    name: str
-    group_id: str
-    summary: str
-    labels: list[str]
-    attributes: dict[str, Any]
-    created_at: datetime
-
-    class Config:
-        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
 
 
 class EntityListResponse(BaseModel):

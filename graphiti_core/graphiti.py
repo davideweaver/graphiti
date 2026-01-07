@@ -126,6 +126,54 @@ class AddTripletResults(BaseModel):
     edges: list[EntityEdge]
 
 
+def extract_role_type(content: str) -> str | None:
+    """
+    Extract role_type from episode content formatted as '[role_type]: content'.
+
+    Args:
+        content: Episode content string with format '[role_type]: message'
+
+    Returns:
+        Role type string ('user', 'assistant', 'system') or None if not found
+
+    Examples:
+        >>> extract_role_type('[user]: Hello world')
+        'user'
+        >>> extract_role_type('[assistant]: Hi there')
+        'assistant'
+        >>> extract_role_type('No prefix here')
+        None
+    """
+    import re
+
+    match = re.match(r'^\[(\w+)\]:\s*', content)
+    return match.group(1) if match else None
+
+
+def extract_message_content(content: str) -> str:
+    """
+    Extract actual message content without role prefix from episode content.
+
+    Args:
+        content: Episode content string with format '[role_type]: message'
+
+    Returns:
+        Message content without role prefix, or original content if no prefix found
+
+    Examples:
+        >>> extract_message_content('[user]: Hello world')
+        'Hello world'
+        >>> extract_message_content('[assistant]: Hi there')
+        'Hi there'
+        >>> extract_message_content('No prefix here')
+        'No prefix here'
+    """
+    import re
+
+    match = re.match(r'^\[\w+\]:\s*(.+)$', content, re.DOTALL)
+    return match.group(1) if match else content
+
+
 class Graphiti:
     def __init__(
         self,
@@ -846,6 +894,7 @@ class Graphiti:
                             llm_client=self.llm_client,
                             session_node=session_node,
                             new_episode=episode,
+                            embedder=self.embedder,
                         )
 
                         # Save updated session node

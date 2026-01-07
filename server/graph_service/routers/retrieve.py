@@ -1,9 +1,12 @@
 import base64
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+logger = logging.getLogger(__name__)
 from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
 from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF  # type: ignore
@@ -107,14 +110,264 @@ async def search(
     )
 
 
+@router.get('/entity-edge/{uuid}/related-facts', status_code=status.HTTP_200_OK)
+async def get_related_facts(
+    uuid: str,
+    group_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
+):
+    """Get fact provenance and lifecycle information.
+
+    Returns:
+    - superseded_by: Facts that invalidated/replaced this fact (created around when this was invalidated)
+    - supersedes: Facts that this fact invalidated/replaced (invalidated around when this was created)
+    - related: Other facts involving the same entities for context
+    """
+    from datetime import timedelta
+
+    # First get the fact to know what entities and timestamps we're working with
+    entity_edge = await graphiti.get_entity_edge(uuid)
+
+    from graphiti_core.helpers import parse_db_date
+    created_at = entity_edge.created_at
+    invalid_at = entity_edge.invalid_at
+
+    # Calculate time windows in Python (FalkorDB doesn't support datetime() function)
+    time_window = timedelta(hours=1)
+
+    # Find superseding facts (created around when this fact was invalidated)
+    # Look within 1 hour window
+    superseded_by_query = None
+    superseded_by_params = {}
+    if invalid_at:
+        invalid_at_before = (invalid_at - time_window).isoformat()
+        invalid_at_after = (invalid_at + time_window).isoformat()
+        superseded_by_query = """
+            MATCH ()-[r:RELATES_TO]->()
+            WHERE r.group_id = $group_id
+              AND r.uuid <> $edge_uuid
+              AND r.name = $rel_name
+              AND (r.source_node_uuid = $source_uuid OR r.target_node_uuid = $source_uuid)
+              AND r.created_at >= $created_at_min
+              AND r.created_at <= $created_at_max
+            RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                   r.valid_at AS valid_at, r.invalid_at AS invalid_at,
+                   r.created_at AS created_at, r.expired_at AS expired_at
+            ORDER BY r.created_at ASC
+            LIMIT 10
+        """
+        superseded_by_params = {
+            'created_at_min': invalid_at_before,
+            'created_at_max': invalid_at_after,
+        }
+
+    # Find superseded facts (invalidated around when this fact was created)
+    created_at_before = (created_at - time_window).isoformat()
+    created_at_after = (created_at + time_window).isoformat()
+    supersedes_query = """
+        MATCH ()-[r:RELATES_TO]->()
+        WHERE r.group_id = $group_id
+          AND r.uuid <> $edge_uuid
+          AND r.name = $rel_name
+          AND (r.source_node_uuid = $source_uuid OR r.target_node_uuid = $source_uuid)
+          AND r.invalid_at IS NOT NULL
+          AND r.invalid_at >= $invalid_at_min
+          AND r.invalid_at <= $invalid_at_max
+        RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+               r.valid_at AS valid_at, r.invalid_at AS invalid_at,
+               r.created_at AS created_at, r.expired_at AS expired_at
+        ORDER BY r.invalid_at DESC
+        LIMIT 10
+    """
+    supersedes_params = {
+        'invalid_at_min': created_at_before,
+        'invalid_at_max': created_at_after,
+    }
+
+    # Find other related facts for context
+    related_query = """
+        MATCH ()-[r:RELATES_TO]->()
+        WHERE r.group_id = $group_id
+          AND r.uuid <> $edge_uuid
+          AND (r.source_node_uuid = $source_uuid
+               OR r.target_node_uuid = $source_uuid
+               OR r.source_node_uuid = $target_uuid
+               OR r.target_node_uuid = $target_uuid)
+        RETURN DISTINCT r.uuid AS uuid, r.name AS name, r.fact AS fact,
+               r.valid_at AS valid_at, r.invalid_at AS invalid_at,
+               r.created_at AS created_at, r.expired_at AS expired_at
+        ORDER BY r.created_at DESC
+        LIMIT 20
+    """
+
+    try:
+        from graphiti_core.helpers import parse_db_date
+
+        def records_to_facts(records):
+            """Convert query records to FactResult objects"""
+            facts = []
+            for record in records:
+                facts.append(
+                    get_fact_result_from_edge(
+                        type('Edge', (), {
+                            'uuid': record['uuid'],
+                            'name': record['name'],
+                            'fact': record['fact'],
+                            'valid_at': parse_db_date(record['valid_at']) if record.get('valid_at') else None,
+                            'invalid_at': parse_db_date(record['invalid_at']) if record.get('invalid_at') else None,
+                            'created_at': parse_db_date(record['created_at']) if record.get('created_at') else None,
+                            'expired_at': parse_db_date(record['expired_at']) if record.get('expired_at') else None,
+                            'source_node_uuid': '',
+                            'target_node_uuid': '',
+                        })()
+                    )
+                )
+            return facts
+
+        # Execute superseded_by query (facts that replaced this one)
+        superseded_by_facts = []
+        if superseded_by_query and invalid_at:
+            records, _, _ = await graphiti.driver.execute_query(
+                superseded_by_query,
+                edge_uuid=uuid,
+                group_id=group_id,
+                source_uuid=entity_edge.source_node_uuid,
+                rel_name=entity_edge.name,
+                **superseded_by_params,
+            )
+            superseded_by_facts = records_to_facts(records)
+
+        # Execute supersedes query (facts that this one replaced)
+        supersedes_facts = []
+        records, _, _ = await graphiti.driver.execute_query(
+            supersedes_query,
+            edge_uuid=uuid,
+            group_id=group_id,
+            source_uuid=entity_edge.source_node_uuid,
+            rel_name=entity_edge.name,
+            **supersedes_params,
+        )
+        supersedes_facts = records_to_facts(records)
+
+        # Execute related query (other facts involving same entities)
+        related_facts = []
+        records, _, _ = await graphiti.driver.execute_query(
+            related_query,
+            edge_uuid=uuid,
+            group_id=group_id,
+            source_uuid=entity_edge.source_node_uuid,
+            target_uuid=entity_edge.target_node_uuid,
+        )
+        related_facts = records_to_facts(records)
+
+        return {
+            'superseded_by': superseded_by_facts,
+            'supersedes': supersedes_facts,
+            'related': related_facts,
+        }
+
+    except Exception as e:
+        logger.error(f'Failed to fetch related facts for edge {uuid}: {e}')
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            'superseded_by': [],
+            'supersedes': [],
+            'related': [],
+        }
+
+
 @router.get('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
 async def get_entity_edge(
     uuid: str,
     group_id: str,
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_query)],
+    include_entities: bool = Query(False, description='Include source and target entity details'),
+    include_episodes: bool = Query(False, description='Include related episodes'),
+    include_related: bool = Query(False, description='Include related facts'),
 ):
+    """Get entity edge (fact) details with optional provenance information.
+
+    Args:
+        uuid: The UUID of the entity edge
+        group_id: The group ID
+        include_entities: If true, includes full details of source and target entities
+        include_episodes: If true, includes episodes that created/mentioned this fact
+
+    Returns:
+        FactResult with optional provenance data
+    """
     entity_edge = await graphiti.get_entity_edge(uuid)
-    return get_fact_result_from_edge(entity_edge)
+
+    source_entity = None
+    target_entity = None
+    episodes = None
+
+    # Fetch source and target entities if requested
+    if include_entities:
+        try:
+            source_node = await EntityNode.get_by_uuid(graphiti.driver, entity_edge.source_node_uuid)
+            source_entity = get_entity_node_response(source_node)
+        except NodeNotFoundError:
+            logger.warning(f'Source entity not found: {entity_edge.source_node_uuid}')
+
+        try:
+            target_node = await EntityNode.get_by_uuid(graphiti.driver, entity_edge.target_node_uuid)
+            target_entity = get_entity_node_response(target_node)
+        except NodeNotFoundError:
+            logger.warning(f'Target entity not found: {entity_edge.target_node_uuid}')
+
+    # Fetch related episodes if requested
+    if include_episodes:
+        from graph_service.dto.retrieve import EpisodeResponse
+        from graphiti_core.helpers import parse_db_date
+
+        # Query episodes that mention either the source or target entity
+        # Note: This is a heuristic - we find episodes that mention the entities in this relationship
+        episodes_query = """
+            MATCH (edge:Relation {uuid: $edge_uuid})
+            MATCH (ep:Episodic)-[:MENTIONS]->(entity:Entity)
+            WHERE entity.uuid IN [$source_uuid, $target_uuid]
+            RETURN DISTINCT ep.uuid AS uuid, ep.name AS name, ep.content AS content,
+                   ep.source_description AS source_description, ep.session_id AS session_id,
+                   ep.timestamp AS timestamp, ep.valid_at AS valid_at,
+                   ep.created_at AS created_at, ep.group_id AS group_id
+            ORDER BY ep.valid_at DESC
+            LIMIT 10
+        """
+
+        try:
+            records, _, _ = await graphiti.driver.execute_query(
+                episodes_query,
+                edge_uuid=uuid,
+                source_uuid=entity_edge.source_node_uuid,
+                target_uuid=entity_edge.target_node_uuid,
+            )
+
+            episodes = [
+                EpisodeResponse(
+                    uuid=record['uuid'],
+                    name=record['name'],
+                    content=record['content'],
+                    source_description=record['source_description'],
+                    session_id=record['session_id'],
+                    timestamp=parse_db_date(record['timestamp']),
+                    valid_at=parse_db_date(record['valid_at']),
+                    created_at=parse_db_date(record['created_at']),
+                    group_id=record['group_id'],
+                )
+                for record in records
+            ]
+        except Exception as e:
+            logger.error(f'Failed to fetch episodes for edge {uuid}: {e}')
+            episodes = []
+
+    return get_fact_result_from_edge(
+        entity_edge,
+        source_entity=source_entity,
+        target_entity=target_entity,
+        episodes=episodes,
+    )
 
 
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)

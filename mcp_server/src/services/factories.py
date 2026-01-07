@@ -131,6 +131,7 @@ class LLMClientFactory:
 
                 llm_config = CoreLLMConfig(
                     api_key=api_key,
+                    base_url=config.providers.openai.api_url,
                     model=config.model,
                     small_model=small_model,
                     temperature=config.temperature,
@@ -275,6 +276,7 @@ class EmbedderFactory:
                 embedder_config = OpenAIEmbedderConfig(
                     api_key=api_key,
                     embedding_model=config.model,
+                    base_url=config.providers.openai.api_url,
                 )
                 return OpenAIEmbedder(config=embedder_config)
 
