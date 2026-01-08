@@ -616,6 +616,8 @@ async def list_sessions(
     graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
     limit: int = Query(50, ge=1, le=500, description='Maximum number of sessions to return'),
     cursor: str | None = Query(None, description='Pagination cursor (base64-encoded offset)'),
+    search: str | None = Query(None, description='Search sessions by session_id, summary, or episode content'),
+    project_name: str | None = Query(None, description='Filter sessions by project name'),
     created_after: datetime | None = Query(None, description='Filter episodes created after (ISO 8601)'),
     created_before: datetime | None = Query(None, description='Filter episodes created before (ISO 8601)'),
     valid_after: datetime | None = Query(None, description='Filter episodes occurred after (ISO 8601)'),
@@ -626,6 +628,9 @@ async def list_sessions(
 
     Sessions are groups of related episodes identified by session_id.
     Returns metadata including episode count and date range for each session.
+
+    Supports text search across session_id, summary, episode content, and source descriptions.
+    Can filter by project name for project-specific sessions.
     """
     # Parse offset from cursor
     offset = 0
@@ -660,16 +665,71 @@ async def list_sessions(
     where_query = ' AND '.join(where_clauses)
     order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
 
+    # Build additional WHERE clauses for search and project filter (for count query)
+    count_where_clauses = []
+    if search:
+        query_params['search'] = search
+    if project_name:
+        query_params['project_name'] = project_name
+
     # Count total sessions (for pagination metadata)
-    count_query = f"""
-        MATCH (e:Episodic)
-        WHERE {where_query}
-        RETURN count(DISTINCT e.session_id) AS total
-    """
+    # Note: For search/project filters, we need to count after aggregation
+    if search or project_name:
+        # Build same WHERE clause logic for count
+        session_where_clauses_count = []
+        if search:
+            session_where_clauses_count.append(
+                '(toLower(session_id) CONTAINS toLower($search) OR '
+                'toLower(summary) CONTAINS toLower($search) OR '
+                'toLower(first_episode_content) CONTAINS toLower($search) OR '
+                'any(desc IN source_descriptions WHERE toLower(desc) CONTAINS toLower($search)))'
+            )
+        if project_name:
+            session_where_clauses_count.append('$project_name IN project_names')
+
+        session_where_query_count = ' AND '.join(session_where_clauses_count)
+
+        count_query = f"""
+            MATCH (e:Episodic)
+            WHERE {where_query}
+            WITH e.session_id AS session_id,
+                 collect(DISTINCT e.source_description) AS source_descriptions
+            OPTIONAL MATCH (s:Session {{session_id: session_id, group_id: $group_id}})
+            OPTIONAL MATCH (s)-[:PART_OF_PROJECT]->(p:Project)
+            OPTIONAL MATCH (first_ep:Episodic {{session_id: session_id, group_id: $group_id}})
+            WITH session_id, source_descriptions, s.summary AS summary,
+                 collect(DISTINCT p.name) AS project_names,
+                 head(collect(first_ep.content)) AS first_episode_content
+            WHERE {session_where_query_count}
+            RETURN count(session_id) AS total
+        """
+    else:
+        count_query = f"""
+            MATCH (e:Episodic)
+            WHERE {where_query}
+            RETURN count(DISTINCT e.session_id) AS total
+        """
+
     count_result, _, _ = await graphiti.driver.execute_query(count_query, **query_params)
     total_count = count_result[0]['total'] if count_result else 0
 
     # Fetch sessions with metadata, optionally joining with SessionNode for summaries and projects
+    # Build additional WHERE clauses for search and project filter
+    session_where_clauses = []
+    if search:
+        # Search across session_id, summary, first_episode_content
+        session_where_clauses.append(
+            '(toLower(session_id) CONTAINS toLower($search) OR '
+            'toLower(summary) CONTAINS toLower($search) OR '
+            'toLower(first_episode_content) CONTAINS toLower($search) OR '
+            'any(desc IN source_descriptions WHERE toLower(desc) CONTAINS toLower($search)))'
+        )
+
+    if project_name:
+        session_where_clauses.append('$project_name IN project_names')
+
+    session_where_query = ' AND '.join(session_where_clauses) if session_where_clauses else '1=1'
+
     sessions_query = f"""
         MATCH (e:Episodic)
         WHERE {where_query}
@@ -683,10 +743,11 @@ async def list_sessions(
         OPTIONAL MATCH (first_ep:Episodic {{session_id: session_id, group_id: $group_id}})
         WHERE first_ep.valid_at = first_episode_date
         WITH session_id, episode_count, first_episode_date, last_episode_date,
-             source_descriptions, s.summary AS summary,
+             source_descriptions, s.summary AS summary, s.uuid AS uuid,
              collect(DISTINCT p.name) AS project_names,
              head(collect(first_ep.content)) AS first_episode_content
-        RETURN session_id, episode_count, first_episode_date,
+        WHERE {session_where_query}
+        RETURN session_id, uuid, episode_count, first_episode_date,
                last_episode_date, source_descriptions, summary,
                project_names, first_episode_content
         ORDER BY last_episode_date {order_direction}
@@ -707,6 +768,7 @@ async def list_sessions(
         sessions.append(
             SessionResponse(
                 session_id=record['session_id'],
+                uuid=record.get('uuid') or record['session_id'],  # Fallback to session_id if uuid is None
                 episode_count=record['episode_count'],
                 first_episode_date=parse_db_date(record['first_episode_date']),
                 last_episode_date=parse_db_date(record['last_episode_date']),
@@ -793,17 +855,21 @@ async def get_session(
 
     Returns session metadata (summary, dates, episode count) plus full episode list.
     Returns 404 if session does not exist.
+
+    Note: session_id parameter can be either the Session's UUID or session_id field.
+    Tries UUID lookup first, then falls back to session_id lookup.
     """
     from graphiti_core.helpers import parse_db_date
 
-    # Query session metadata from SessionNode with project information
+    # Try UUID lookup first (Session nodes now have uuid field)
     session_query = """
-        MATCH (s:Session {session_id: $session_id, group_id: $group_id})
+        MATCH (s:Session {uuid: $identifier, group_id: $group_id})
         OPTIONAL MATCH (s)-[:PART_OF_PROJECT]->(p:Project)
-        OPTIONAL MATCH (first_ep:Episodic {session_id: $session_id, group_id: $group_id})
+        OPTIONAL MATCH (first_ep:Episodic {session_id: s.session_id, group_id: $group_id})
         WHERE first_ep.valid_at = s.first_episode_date
         WITH s, collect(DISTINCT p.name) AS project_names, head(collect(first_ep.content)) AS first_episode_content
         RETURN s.session_id AS session_id,
+               s.uuid AS uuid,
                s.summary AS summary,
                s.episode_count AS episode_count,
                s.first_episode_date AS first_episode_date,
@@ -815,21 +881,48 @@ async def get_session(
 
     records, _, _ = await graphiti.driver.execute_query(
         session_query,
-        session_id=session_id,
+        identifier=session_id,
         group_id=group_id
     )
+
+    # If not found by UUID, try session_id lookup (backward compatibility)
+    if not records:
+        session_query_fallback = """
+            MATCH (s:Session {session_id: $identifier, group_id: $group_id})
+            OPTIONAL MATCH (s)-[:PART_OF_PROJECT]->(p:Project)
+            OPTIONAL MATCH (first_ep:Episodic {session_id: $identifier, group_id: $group_id})
+            WHERE first_ep.valid_at = s.first_episode_date
+            WITH s, collect(DISTINCT p.name) AS project_names, head(collect(first_ep.content)) AS first_episode_content
+            RETURN s.session_id AS session_id,
+                   s.uuid AS uuid,
+                   s.summary AS summary,
+                   s.episode_count AS episode_count,
+                   s.first_episode_date AS first_episode_date,
+                   s.last_episode_date AS last_episode_date,
+                   s.source_descriptions AS source_descriptions,
+                   project_names,
+                   first_episode_content
+        """
+        records, _, _ = await graphiti.driver.execute_query(
+            session_query_fallback,
+            identifier=session_id,
+            group_id=group_id
+        )
 
     if not records:
         raise HTTPException(status_code=404, detail=f'Session not found: {session_id}')
 
     session_data = records[0]
 
+    # Get actual session_id for episode retrieval
+    actual_session_id = session_data['session_id']
+
     # Retrieve all episodes for this session
     episodes = await graphiti.retrieve_episodes(
         group_ids=[group_id],
         last_n=10000,
         reference_time=datetime.now(timezone.utc),
-        session_id=session_id,
+        session_id=actual_session_id,
     )
 
     # Filter out None values from project_names
@@ -838,6 +931,7 @@ async def get_session(
     # Return session with metadata and episodes
     return {
         'session_id': session_data['session_id'],
+        'uuid': session_data.get('uuid') or session_data['session_id'],  # Fallback to session_id if uuid is None
         'summary': session_data.get('summary'),
         'episode_count': session_data.get('episode_count', 0),
         'first_episode_date': parse_db_date(session_data['first_episode_date']) if session_data.get('first_episode_date') else None,
@@ -1168,6 +1262,7 @@ async def get_project_sessions(
         sessions.append(
             SessionResponse(
                 session_id=record['session_id'],
+                uuid=record['session_id'],  # UUID matches session_id for consistency
                 episode_count=record['episode_count'] if record['episode_count'] else 0,
                 first_episode_date=parse_db_date(record['first_episode_date']) if record.get('first_episode_date') else None,
                 last_episode_date=parse_db_date(record['last_episode_date']) if record.get('last_episode_date') else None,

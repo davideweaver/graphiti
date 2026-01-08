@@ -6,6 +6,10 @@ from graph_service.dto.common import Message
 class AddMessagesRequest(BaseModel):
     group_id: str = Field(..., description='The group id of the messages to add')
     messages: list[Message] = Field(..., description='The messages to add')
+    skip_extraction: bool = Field(
+        default=False,
+        description='If True, skip entity and fact extraction (creates episodes only)',
+    )
 
 
 class AddEntityNodeRequest(BaseModel):

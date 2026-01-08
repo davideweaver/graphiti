@@ -695,6 +695,7 @@ class Graphiti:
         group_id: str | None = None,
         uuid: str | None = None,
         update_communities: bool = False,
+        skip_extraction: bool = False,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
         previous_episode_uuids: list[str] | None = None,
@@ -726,6 +727,10 @@ class Graphiti:
             Optional uuid of the episode.
         update_communities : bool
             Optional. Whether to update communities with new node information
+        skip_extraction : bool
+            Optional. If True, skip entity and fact extraction. Only creates the episode node
+            with session and project tracking. Defaults to False. Use this to save LLM tokens
+            when you only need conversation history without knowledge graph extraction.
         entity_types : dict[str, BaseModel] | None
             Optional. Dictionary mapping entity type names to their Pydantic model definitions.
         excluded_entity_types : list[str] | None
@@ -808,6 +813,127 @@ class Graphiti:
                         valid_at=reference_time,
                     )
                 )
+
+                # If skip_extraction is True, save episode and handle session/project, then return
+                if skip_extraction:
+                    # Save episode
+                    await episode.save(self.driver)
+
+                    # Update session summary if session_id provided
+                    if session_id:
+                        try:
+                            from graphiti_core.utils.maintenance.session_operations import (
+                                get_or_create_session_node,
+                                link_episode_to_session,
+                                update_session_summary,
+                            )
+
+                            # Get or create session node
+                            session_node = await get_or_create_session_node(
+                                driver=self.driver,
+                                group_id=group_id,
+                                session_id=session_id,
+                                episode_time=reference_time,
+                                source_description=source_description,
+                            )
+
+                            # Update summary with new episode
+                            session_node = await update_session_summary(
+                                llm_client=self.llm_client,
+                                session_node=session_node,
+                                new_episode=episode,
+                                embedder=self.embedder,
+                            )
+
+                            # Save updated session node
+                            await session_node.save(self.driver)
+
+                            # Link episode to session
+                            await link_episode_to_session(
+                                driver=self.driver,
+                                episode_uuid=episode.uuid,
+                                session_uuid=session_node.uuid,
+                            )
+
+                            logger.debug(
+                                f'Updated session {session_id}: episode_count={session_node.episode_count}, summary="{session_node.summary}"'
+                            )
+
+                        except Exception as e:
+                            # Don't block episode ingestion if session update fails
+                            logger.error(
+                                f'Failed to update session {session_id} for episode {episode.uuid}: {type(e).__name__}: {e}'
+                            )
+
+                    # Update project if project_name provided
+                    if project_name:
+                        try:
+                            from graphiti_core.utils.maintenance.project_operations import (
+                                get_or_create_project_node,
+                                link_episode_to_project,
+                                link_session_to_project,
+                            )
+
+                            # Get or create project node
+                            project_node = await get_or_create_project_node(
+                                driver=self.driver,
+                                group_id=group_id,
+                                project_name=project_name,
+                                project_path=project_path,
+                            )
+
+                            # Save project node
+                            await project_node.save(self.driver)
+
+                            # Link episode to project
+                            await link_episode_to_project(
+                                driver=self.driver,
+                                episode_uuid=episode.uuid,
+                                project_uuid=project_node.uuid,
+                            )
+
+                            # Link session to project if session exists
+                            if session_id and 'session_node' in locals():
+                                await link_session_to_project(
+                                    driver=self.driver,
+                                    session_uuid=session_node.uuid,
+                                    project_uuid=project_node.uuid,
+                                )
+
+                            logger.debug(f'Linked episode {episode.uuid} to project {project_name}')
+
+                        except Exception as e:
+                            # Don't block episode ingestion if project update fails
+                            logger.error(
+                                f'Failed to update project {project_name} for episode {episode.uuid}: {type(e).__name__}: {e}'
+                            )
+
+                    end = time()
+
+                    # Add span attributes
+                    span.add_attributes(
+                        {
+                            'episode.uuid': episode.uuid,
+                            'episode.source': source.value,
+                            'episode.reference_time': reference_time.isoformat(),
+                            'group_id': group_id,
+                            'skip_extraction': True,
+                            'duration_ms': (end - start) * 1000,
+                        }
+                    )
+
+                    logger.info(
+                        f'Completed add_episode (skip_extraction=True) in {(end - start) * 1000} ms'
+                    )
+
+                    return AddEpisodeResults(
+                        episode=episode,
+                        episodic_edges=[],
+                        nodes=[],
+                        edges=[],
+                        communities=[],
+                        community_edges=[],
+                    )
 
                 # Create default edge type map
                 edge_type_map_default = (

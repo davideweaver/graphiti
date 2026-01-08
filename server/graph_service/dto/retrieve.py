@@ -97,6 +97,7 @@ class EntityListResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+    uuid: str  # Session UUID from database (same as session_id for consistency)
     episode_count: int
     first_episode_date: datetime
     last_episode_date: datetime

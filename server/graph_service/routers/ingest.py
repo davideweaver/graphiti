@@ -150,6 +150,7 @@ async def add_messages(
                 session_id=session_id,
                 project_name=project_name,
                 project_path=m.project_path,
+                skip_extraction=request.skip_extraction,
                 entity_types=ENTITY_TYPES,
             )
             logger.debug('Task - add_episode_with_events() completed successfully')
