@@ -30,8 +30,8 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         return [
             # Entity node
             'CREATE INDEX FOR (n:Entity) ON (n.uuid, n.group_id, n.name, n.created_at)',
-            # Episodic node
-            'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at, n.session_id)',
+            # Episodic node (optimized: group_id and valid_at first for stats queries)
+            'CREATE INDEX FOR (n:Episodic) ON (n.group_id, n.valid_at, n.session_id, n.uuid, n.created_at)',
             # Session node
             'CREATE INDEX FOR (n:Session) ON (n.uuid, n.session_id, n.group_id, n.last_episode_date)',
             # Community node

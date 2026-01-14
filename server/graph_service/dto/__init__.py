@@ -1,4 +1,11 @@
 from .common import Message, Result
+from .graph import (
+    EdgeConnectionsResponse,
+    GraphConnection,
+    GraphEdge,
+    GraphNode,
+    NodeConnectionsResponse,
+)
 from .ingest import AddEntityNodeRequest, AddMessagesRequest
 from .retrieve import (
     DaySessionCount,
@@ -30,4 +37,9 @@ __all__ = [
     'SessionListResponse',
     'DaySessionCount',
     'SessionStatsByDayResponse',
+    'GraphNode',
+    'GraphEdge',
+    'GraphConnection',
+    'NodeConnectionsResponse',
+    'EdgeConnectionsResponse',
 ]

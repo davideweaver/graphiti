@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from graph_service.config import get_settings
 from graph_service.events import get_event_bus
-from graph_service.routers import ingest, retrieve
+from graph_service.routers import graph, ingest, retrieve
 from graph_service.routers.ingest import async_worker
 from graph_service.websocket import get_ws_manager
 from graph_service.websocket import router as websocket_router
@@ -79,6 +79,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(retrieve.router)
 app.include_router(ingest.router)
+app.include_router(graph.router)
 app.include_router(websocket_router)
 
 

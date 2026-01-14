@@ -321,6 +321,9 @@ class FalkorDriver(GraphDriver):
                 '=': ' ',
                 '~': ' ',
                 '?': ' ',
+                '/': ' ',  # Forward slash (file paths)
+                '\\': ' ',  # Backslash (Windows paths)
+                '|': ' ',  # Pipe (OR operator)
             }
         )
         sanitized = query.translate(separator_map)
