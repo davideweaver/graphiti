@@ -24,18 +24,26 @@ class AsyncWorker:
     def __init__(self):
         self.queue = asyncio.Queue()
         self.task = None
+        self.processing_count = 0
+        self._processing_lock = asyncio.Lock()  # Thread-safe counter updates
 
     async def emit_queue_status(self):
         """Emit queue status event to all WebSocket clients."""
         queue_size = self.queue.qsize()
+        async with self._processing_lock:
+            processing_count = self.processing_count
+        total_pending = queue_size + processing_count
+
         event_bus = get_event_bus()
         # Broadcast to all groups (group_id='*' is a special broadcast group)
         await event_bus.publish(
             event_type='queue.status',
             group_id='*',  # Broadcast to all connected clients
             data={
-                'queue_size': queue_size,
-                'is_processing': queue_size > 0,
+                'queue_size': queue_size,  # Items waiting
+                'processing_count': processing_count,  # Items being processed
+                'total_pending': total_pending,  # Total work remaining
+                'is_processing': total_pending > 0,
             },
         )
 
@@ -47,9 +55,18 @@ class AsyncWorker:
                 logger.debug(f'AsyncWorker - Waiting for job... (queue size: {queue_size})')
                 job = await self.queue.get()
 
+                # Increment processing count and emit status
+                async with self._processing_lock:
+                    self.processing_count += 1
+
                 remaining = self.queue.qsize()
-                logger.info(f'Processing job (queue: {remaining} remaining)')
-                logger.debug(f'Got a job: (size of remaining queue: {remaining})')
+                logger.info(
+                    f'Processing job (queue: {remaining} waiting, '
+                    f'processing: {self.processing_count})'
+                )
+
+                # Emit status after incrementing processing count
+                await self.emit_queue_status()
 
                 try:
                     # Let LLM_TIMEOUT and EMBEDDING_TIMEOUT handle timeouts
@@ -64,6 +81,9 @@ class AsyncWorker:
 
                     traceback.print_exc()
                 finally:
+                    # Decrement processing count
+                    async with self._processing_lock:
+                        self.processing_count -= 1
                     self.queue.task_done()
                     # Emit queue status after job completes
                     await self.emit_queue_status()
