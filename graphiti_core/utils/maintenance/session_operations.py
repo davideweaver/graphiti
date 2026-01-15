@@ -38,6 +38,52 @@ from graphiti_core.utils.datetime_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+def compress_intents_to_summary(intents: list[str]) -> str:
+    """
+    Compress a list of intents into a human-readable summary using template-based logic.
+
+    Format: "Main intent. Also worked on topic1, topic2, and N other refinements"
+
+    Parameters
+    ----------
+    intents : list[str]
+        List of user intents/topics in chronological order
+
+    Returns
+    -------
+    str
+        Human-readable summary under 200 characters
+    """
+    if not intents:
+        return ''
+
+    # Clean up main intent (remove trailing periods/commas)
+    main_intent = intents[0].rstrip('.,')
+
+    if len(intents) == 1:
+        return main_intent
+
+    # Get additional intents (refinements)
+    additional_intents = [intent.rstrip('.,') for intent in intents[1:]]
+
+    if len(additional_intents) == 1:
+        # One refinement - show it directly
+        return f'{main_intent}. Also worked on {additional_intents[0]}'
+    elif len(additional_intents) == 2:
+        # Two refinements - show both
+        return f'{main_intent}. Also worked on {additional_intents[0]} and {additional_intents[1]}'
+    elif len(additional_intents) <= 4:
+        # 3-4 refinements - list all with commas
+        refinements_text = ', '.join(additional_intents[:-1]) + f', and {additional_intents[-1]}'
+        return f'{main_intent}. Also worked on {refinements_text}'
+    else:
+        # 5+ refinements - show first 2-3 most significant and summarize
+        # Take first 2 intents (likely most significant based on order)
+        top_refinements = ', '.join(additional_intents[:2])
+        remaining_count = len(additional_intents) - 2
+        return f'{main_intent}. Also worked on {top_refinements}, and {remaining_count} other refinements'
+
+
 async def get_or_create_session_node(
     driver: GraphDriver,
     group_id: str,
@@ -170,8 +216,8 @@ async def update_session_summary(
 
     # Generate or update summary
     try:
-        # Check if this is the first user message (summary is empty)
-        if not session_node.summary:
+        # Check if this is the first user message (no intents yet)
+        if not session_node.intents:
             # First user message - extract initial intent
             logger.debug(
                 f'Extracting initial intent for session: {session_node.session_id} (episode {session_node.episode_count})'
@@ -188,9 +234,14 @@ async def update_session_summary(
                 prompt_name='summarize_sessions.extract_initial_intent',
             )
 
-            session_node.summary = summary_response.get('summary', '')
+            initial_intent = summary_response.get('summary', '')
+            session_node.intents.append(initial_intent)
+            session_node.summary = compress_intents_to_summary(session_node.intents)
             logger.debug(
-                f'Extracted initial intent for session {session_node.session_id}: "{session_node.summary}"'
+                f'Extracted initial intent for session {session_node.session_id}: "{initial_intent}"'
+            )
+            logger.debug(
+                f'Generated summary for session {session_node.session_id}: "{session_node.summary}"'
             )
 
         else:
@@ -240,71 +291,29 @@ async def update_session_summary(
                 )
 
                 if intent_response.get('changed', False):
-                    # Append new intent to summary
+                    # Append new intent to intents list
                     new_intent = intent_response.get('new_intent', '')
                     logger.debug(
                         f'Intent changed for session {session_node.session_id}, appending: "{new_intent}"'
                     )
 
-                    append_context = {
-                        'current_summary': session_node.summary,
-                        'new_intent': new_intent,
-                        'session_id': session_node.session_id,
-                    }
-
-                    summary_response = await summarization_client.generate_response(
-                        append_new_intent(append_context),
-                        response_model=SessionSummary,
-                        prompt_name='summarize_sessions.append_new_intent',
-                    )
-
-                    session_node.summary = summary_response.get('summary', '')
+                    session_node.intents.append(new_intent)
+                    session_node.summary = compress_intents_to_summary(session_node.intents)
                     logger.debug(
-                        f'Appended new intent for session {session_node.session_id}: "{session_node.summary}"'
+                        f'Appended new intent for session {session_node.session_id} (total: {len(session_node.intents)})'
+                    )
+                    logger.debug(
+                        f'Generated summary for session {session_node.session_id}: "{session_node.summary}"'
                     )
                 else:
-                    # LLM says same intent despite low similarity - refine
+                    # LLM says same intent despite low similarity - no change needed
                     logger.debug(
-                        f'LLM determined same intent for session {session_node.session_id}, refining'
-                    )
-
-                    refine_context = {
-                        'current_summary': session_node.summary,
-                        'new_message': message_content,
-                        'session_id': session_node.session_id,
-                    }
-
-                    summary_response = await summarization_client.generate_response(
-                        refine_existing_intent(refine_context),
-                        response_model=SessionSummary,
-                        prompt_name='summarize_sessions.refine_existing_intent',
-                    )
-
-                    session_node.summary = summary_response.get('summary', '')
-                    logger.debug(
-                        f'Refined intent for session {session_node.session_id}: "{session_node.summary}"'
+                        f'LLM determined same intent for session {session_node.session_id}, no update needed'
                     )
             else:
-                # Same intent (high similarity) - refine existing summary
+                # Same intent (high similarity) - no change needed
                 logger.debug(
-                    f'High similarity ({similarity:.2f}) detected for session {session_node.session_id}, refining summary'
-                )
-
-                refine_context = {
-                    'current_summary': session_node.summary,
-                    'new_message': message_content,
-                    'session_id': session_node.session_id,
-                }
-
-                summary_response = await summarization_client.generate_response(
-                    refine_existing_intent(refine_context),
-                    response_model=SessionSummary,
-                    prompt_name='summarize_sessions.refine_existing_intent',
-                )
-
-                session_node.summary = summary_response.get('summary', '')
-                logger.debug(
-                    f'Refined intent for session {session_node.session_id}: "{session_node.summary}"'
+                    f'High similarity ({similarity:.2f}) detected for session {session_node.session_id}, no update needed'
                 )
 
     except Exception as e:

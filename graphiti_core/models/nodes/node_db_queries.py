@@ -343,7 +343,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
         case GraphProvider.NEPTUNE:
             return """
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
-                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
                 source_descriptions: join([x IN coalesce($source_descriptions, []) | toString(x) ], '|'), created_at: $created_at}
                 RETURN n.uuid AS uuid
@@ -355,6 +355,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
                     n.uuid = $uuid,
                     n.name = $name,
                     n.summary = $summary,
+                    n.intents = $intents,
                     n.episode_count = $episode_count,
                     n.first_episode_date = $first_episode_date,
                     n.last_episode_date = $last_episode_date,
@@ -365,7 +366,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
         case GraphProvider.FALKORDB:
             return """
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
-                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
                 source_descriptions: $source_descriptions, created_at: $created_at}
                 RETURN n.uuid AS uuid
@@ -373,7 +374,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
         case _:  # Neo4j
             return """
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
-                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary,
+                SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
                 source_descriptions: $source_descriptions, created_at: $created_at}
                 RETURN n.uuid AS uuid
@@ -387,6 +388,7 @@ SESSION_NODE_RETURN = """
     s.group_id AS group_id,
     s.created_at AS created_at,
     s.summary AS summary,
+    s.intents AS intents,
     s.episode_count AS episode_count,
     s.first_episode_date AS first_episode_date,
     s.last_episode_date AS last_episode_date,
@@ -400,6 +402,7 @@ SESSION_NODE_RETURN_NEPTUNE = """
     s.group_id AS group_id,
     s.created_at AS created_at,
     s.summary AS summary,
+    s.intents AS intents,
     s.episode_count AS episode_count,
     s.first_episode_date AS first_episode_date,
     s.last_episode_date AS last_episode_date,

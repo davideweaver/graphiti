@@ -714,6 +714,9 @@ class SessionNode(Node):
 
     session_id: str = Field(description='UUID of the session')
     summary: str = Field(description='Rolling summary of session content', default='')
+    intents: list[str] = Field(
+        description='List of user intents/topics in chronological order', default_factory=list
+    )
     episode_count: int = Field(description='Number of episodes in session', default=0)
     first_episode_date: datetime = Field(description='Timestamp of first episode')
     last_episode_date: datetime = Field(description='Timestamp of most recent episode')
@@ -728,6 +731,7 @@ class SessionNode(Node):
             'session_id': self.session_id,
             'group_id': self.group_id,
             'summary': self.summary,
+            'intents': self.intents,
             'episode_count': self.episode_count,
             'first_episode_date': self.first_episode_date,
             'last_episode_date': self.last_episode_date,
@@ -1093,6 +1097,11 @@ def get_session_node_from_record(record: Any) -> SessionNode:
     if isinstance(source_descriptions, str):
         source_descriptions = [source_descriptions] if source_descriptions else []
 
+    intents = record.get('intents', [])
+    # Handle case where intents might be missing (backwards compatibility) or None
+    if intents is None:
+        intents = []
+
     return SessionNode(
         uuid=record['uuid'],
         name=record['name'],
@@ -1100,6 +1109,7 @@ def get_session_node_from_record(record: Any) -> SessionNode:
         group_id=record['group_id'],
         created_at=created_at,
         summary=record.get('summary', ''),
+        intents=intents,
         episode_count=record.get('episode_count', 0),
         first_episode_date=first_episode_date,
         last_episode_date=last_episode_date,
