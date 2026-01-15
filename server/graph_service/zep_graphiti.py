@@ -76,6 +76,31 @@ class ZepGraphiti(Graphiti):
                 f'Using OpenAIGenericClient with base_url={llm_config.base_url}, model={llm_config.model}'
             )
 
+        # Configure dedicated session summarization LLM (optional, falls back to main model)
+        session_llm_client = None
+        session_model = os.getenv('SESSION_SUMMARIZATION_MODEL')
+        session_base_url = os.getenv('SESSION_SUMMARIZATION_BASE_URL')
+        session_api_key = os.getenv('SESSION_SUMMARIZATION_API_KEY')
+
+        # Only create separate client if at least one session-specific config is set
+        if session_model or session_base_url or session_api_key:
+            from graphiti_core.llm_client.config import LLMConfig
+            from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+
+            session_llm_config = LLMConfig(
+                api_key=session_api_key or os.getenv('OPENAI_API_KEY', 'not-needed'),
+                model=session_model or os.getenv('OPENAI_MODEL', 'meta-llama-3.1-8b-instruct-q4_k_m'),
+                base_url=session_base_url or os.getenv('OPENAI_BASE_URL', 'http://172.16.0.114:9002/v1'),
+            )
+            session_timeout = float(os.getenv('SESSION_SUMMARIZATION_TIMEOUT', os.getenv('LLM_TIMEOUT', '120.0')))
+            session_llm_client = OpenAIGenericClient(config=session_llm_config, max_tokens=4096)
+            session_llm_client.client.timeout = session_timeout
+            logger.info(
+                f'Using dedicated session LLM: base_url={session_llm_config.base_url}, model={session_llm_config.model}, timeout={session_timeout}s'
+            )
+        else:
+            logger.info('Using main LLM client for session summarization (no session-specific config)')
+
         # Configure local embedder using dedicated llama.cpp embedding server
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
@@ -98,6 +123,7 @@ class ZepGraphiti(Graphiti):
             user=None,
             password=None,
             llm_client=llm_client,
+            session_llm_client=session_llm_client,
             embedder=embedder,
             graph_driver=driver,
         )
@@ -283,9 +309,22 @@ async def get_or_create_graphiti_instance(group_id: str) -> ZepGraphiti:
         if _settings.model_name is not None:
             instance.llm_client.model = _settings.model_name
 
+        # Apply settings overrides to session LLM client if it exists and is different from main client
+        if instance.session_llm_client is not instance.llm_client:
+            if _settings.session_base_url is not None:
+                instance.session_llm_client.config.base_url = _settings.session_base_url
+            if _settings.session_api_key is not None:
+                instance.session_llm_client.config.api_key = _settings.session_api_key
+            if _settings.session_model_name is not None:
+                instance.session_llm_client.model = _settings.session_model_name
+
         logger.info(
             f'Instance LLM client: base_url={instance.llm_client.config.base_url}, model={instance.llm_client.model}'
         )
+        if instance.session_llm_client is not instance.llm_client:
+            logger.info(
+                f'Instance session LLM client: base_url={instance.session_llm_client.config.base_url}, model={instance.session_llm_client.model}'
+            )
         logger.info(
             f'Instance embedder: {instance.embedder.config.embedding_model} ({instance.embedder.config.embedding_dim}d)'
         )

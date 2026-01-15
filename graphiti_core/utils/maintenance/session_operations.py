@@ -97,6 +97,7 @@ async def update_session_summary(
     session_node: SessionNode,
     new_episode: EpisodicNode,
     embedder: EmbedderClient | None = None,
+    session_llm_client: LLMClient | None = None,
 ) -> SessionNode:
     """
     Update the session summary with a new episode using intent-based approach.
@@ -118,12 +119,24 @@ async def update_session_summary(
         The new episode to incorporate into the summary
     embedder : EmbedderClient | None
         The embedder client for intent change detection (optional)
+    session_llm_client : LLMClient | None
+        Optional dedicated LLM client for session summarization.
+        If not provided, falls back to llm_client parameter.
 
     Returns
     -------
     SessionNode
         Updated session node with new summary and metadata
     """
+    # Use session_llm_client if provided, otherwise fall back to llm_client
+    summarization_client = session_llm_client or llm_client
+
+    # DEBUG: Log which client is being used
+    if session_llm_client and session_llm_client is not llm_client:
+        logger.info(f'[DEBUG] Using DEDICATED session LLM for session {session_node.session_id}: base_url={summarization_client.config.base_url}, model={summarization_client.model}')
+    else:
+        logger.warning(f'[DEBUG] Using MAIN llm_client for session {session_node.session_id} (session_llm_client was None or same as main): base_url={summarization_client.config.base_url}, model={summarization_client.model}')
+
     # Update episode count
     session_node.episode_count += 1
 
@@ -169,7 +182,7 @@ async def update_session_summary(
                 'session_id': session_node.session_id,
             }
 
-            summary_response = await llm_client.generate_response(
+            summary_response = await summarization_client.generate_response(
                 extract_initial_intent(prompt_context),
                 response_model=SessionSummary,
                 prompt_name='summarize_sessions.extract_initial_intent',
@@ -220,7 +233,7 @@ async def update_session_summary(
                     'session_id': session_node.session_id,
                 }
 
-                intent_response = await llm_client.generate_response(
+                intent_response = await summarization_client.generate_response(
                     detect_intent_change(intent_context),
                     response_model=IntentChange,
                     prompt_name='summarize_sessions.detect_intent_change',
@@ -239,7 +252,7 @@ async def update_session_summary(
                         'session_id': session_node.session_id,
                     }
 
-                    summary_response = await llm_client.generate_response(
+                    summary_response = await summarization_client.generate_response(
                         append_new_intent(append_context),
                         response_model=SessionSummary,
                         prompt_name='summarize_sessions.append_new_intent',
@@ -261,7 +274,7 @@ async def update_session_summary(
                         'session_id': session_node.session_id,
                     }
 
-                    summary_response = await llm_client.generate_response(
+                    summary_response = await summarization_client.generate_response(
                         refine_existing_intent(refine_context),
                         response_model=SessionSummary,
                         prompt_name='summarize_sessions.refine_existing_intent',
@@ -283,7 +296,7 @@ async def update_session_summary(
                     'session_id': session_node.session_id,
                 }
 
-                summary_response = await llm_client.generate_response(
+                summary_response = await summarization_client.generate_response(
                     refine_existing_intent(refine_context),
                     response_model=SessionSummary,
                     prompt_name='summarize_sessions.refine_existing_intent',

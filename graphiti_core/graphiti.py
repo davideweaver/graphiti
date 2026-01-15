@@ -181,6 +181,7 @@ class Graphiti:
         user: str | None = None,
         password: str | None = None,
         llm_client: LLMClient | None = None,
+        session_llm_client: LLMClient | None = None,
         embedder: EmbedderClient | None = None,
         cross_encoder: CrossEncoderClient | None = None,
         store_raw_episode_content: bool = True,
@@ -206,6 +207,10 @@ class Graphiti:
         llm_client : LLMClient | None, optional
             An instance of LLMClient for natural language processing tasks.
             If not provided, a default OpenAIClient will be initialized.
+        session_llm_client : LLMClient | None, optional
+            Optional dedicated LLM client for session summarization operations.
+            If not provided, falls back to using the main llm_client.
+            This allows using a faster/smaller model for session summaries.
         embedder : EmbedderClient | None, optional
             An instance of EmbedderClient for embedding tasks.
             If not provided, a default OpenAIEmbedder will be initialized.
@@ -257,6 +262,10 @@ class Graphiti:
             self.llm_client = llm_client
         else:
             self.llm_client = OpenAIClient()
+
+        # Session LLM client for session summarization (falls back to main client)
+        self.session_llm_client = session_llm_client or self.llm_client
+
         if embedder:
             self.embedder = embedder
         else:
@@ -843,6 +852,7 @@ class Graphiti:
                                 session_node=session_node,
                                 new_episode=episode,
                                 embedder=self.embedder,
+                                session_llm_client=self.session_llm_client,
                             )
 
                             # Save updated session node
@@ -1021,6 +1031,7 @@ class Graphiti:
                             session_node=session_node,
                             new_episode=episode,
                             embedder=self.embedder,
+                            session_llm_client=self.session_llm_client,
                         )
 
                         # Save updated session node
