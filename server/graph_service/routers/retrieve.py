@@ -370,6 +370,309 @@ async def get_entity_edge(
     )
 
 
+@router.get('/facts/{group_id}/{fact_uuid}', status_code=status.HTTP_200_OK)
+async def get_fact(
+    group_id: str,
+    fact_uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    include_entities: bool = Query(False, description='Include source and target entity details'),
+):
+    """Get a fact (entity edge) by UUID.
+
+    Args:
+        group_id: The group ID
+        fact_uuid: UUID of the fact (EntityEdge)
+        include_entities: If true, includes full details of source and target entities
+
+    Returns:
+        Fact details including name, fact text, timestamps, and optionally entity details
+
+    Example:
+        GET /facts/dave-weaver/{uuid}
+        GET /facts/dave-weaver/{uuid}?include_entities=true
+    """
+    try:
+        entity_edge = await graphiti.get_entity_edge(fact_uuid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=404, detail=f'Fact not found: {fact_uuid}'
+        ) from e
+
+    source_entity = None
+    target_entity = None
+
+    if include_entities:
+        try:
+            source_node = await EntityNode.get_by_uuid(graphiti.driver, entity_edge.source_node_uuid)
+            source_entity = get_entity_node_response(source_node)
+        except NodeNotFoundError:
+            logger.warning(f'Source entity not found: {entity_edge.source_node_uuid}')
+
+        try:
+            target_node = await EntityNode.get_by_uuid(graphiti.driver, entity_edge.target_node_uuid)
+            target_entity = get_entity_node_response(target_node)
+        except NodeNotFoundError:
+            logger.warning(f'Target entity not found: {entity_edge.target_node_uuid}')
+
+    return get_fact_result_from_edge(
+        entity_edge,
+        source_entity=source_entity,
+        target_entity=target_entity,
+    )
+
+
+@router.get('/facts/{group_id}/{fact_uuid}/episodes', status_code=status.HTTP_200_OK)
+async def get_fact_episodes(
+    group_id: str,
+    fact_uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    context_before: int = Query(
+        0, ge=0, le=20, description='Number of episodes before each fact episode'
+    ),
+    context_after: int = Query(
+        0, ge=0, le=20, description='Number of episodes after each fact episode'
+    ),
+    include_full_session: bool = Query(
+        False, description='Include all episodes from the session(s), ignoring context limits'
+    ),
+):
+    """Get episodes that created/mentioned a fact, with optional surrounding context.
+
+    This endpoint helps trace a fact back to its conversational origin.
+
+    Args:
+        group_id: The group ID
+        fact_uuid: UUID of the fact (EntityEdge)
+        context_before: Number of episodes before each fact episode to include (0-20)
+        context_after: Number of episodes after each fact episode to include (0-20)
+        include_full_session: If true, returns all episodes from the session(s)
+
+    Returns:
+        - fact: The fact details (name, fact text, timestamps, entities)
+        - fact_episodes: Episodes that directly created/mentioned this fact
+        - context_episodes: Surrounding episodes if context requested
+        - sessions: Session metadata for involved sessions
+
+    Examples:
+        - Just fact episodes: GET /facts/dave-weaver/{uuid}/episodes
+        - With context: GET /facts/dave-weaver/{uuid}/episodes?context_before=2&context_after=2
+        - Full conversation: GET /facts/dave-weaver/{uuid}/episodes?include_full_session=true
+    """
+    from graphiti_core.helpers import parse_db_date
+    from graphiti_core.nodes import EpisodicNode
+
+    # 1. Get the fact and its episode UUIDs
+    try:
+        entity_edge = await graphiti.get_entity_edge(fact_uuid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=404, detail=f'Fact not found: {fact_uuid}'
+        ) from e
+
+    if not entity_edge.episodes:
+        # No episodes linked to this fact
+        return {
+            'fact': get_fact_result_from_edge(entity_edge),
+            'fact_episodes': [],
+            'context_episodes': [],
+            'sessions': [],
+        }
+
+    # 2. Get the episodes that directly created/mentioned this fact
+    fact_episodes_query = """
+        MATCH (ep:Episodic)
+        WHERE ep.uuid IN $episode_uuids AND ep.group_id = $group_id
+        RETURN ep.uuid AS uuid, ep.name AS name, ep.content AS content,
+               ep.source_description AS source_description, ep.session_id AS session_id,
+               ep.valid_at AS valid_at, ep.created_at AS created_at
+        ORDER BY ep.valid_at ASC
+    """
+
+    records, _, _ = await graphiti.driver.execute_query(
+        fact_episodes_query, episode_uuids=entity_edge.episodes, group_id=group_id
+    )
+
+    fact_episodes = [
+        {
+            'uuid': record['uuid'],
+            'name': record['name'],
+            'content': record['content'],
+            'source_description': record['source_description'],
+            'session_id': record.get('session_id'),
+            'valid_at': parse_db_date(record['valid_at']) if record.get('valid_at') else None,
+            'created_at': parse_db_date(record['created_at'])
+            if record.get('created_at')
+            else None,
+        }
+        for record in records
+    ]
+
+    # Extract session IDs from fact episodes
+    session_ids = list(set(ep['session_id'] for ep in fact_episodes if ep['session_id']))
+
+    # 3. Get context or full session episodes if requested
+    context_episodes = []
+
+    if include_full_session and session_ids:
+        # Get all episodes from the involved sessions
+        full_session_query = """
+            MATCH (ep:Episodic)
+            WHERE ep.session_id IN $session_ids
+              AND ep.group_id = $group_id
+              AND NOT ep.uuid IN $fact_episode_uuids
+            RETURN ep.uuid AS uuid, ep.name AS name, ep.content AS content,
+                   ep.source_description AS source_description, ep.session_id AS session_id,
+                   ep.valid_at AS valid_at, ep.created_at AS created_at
+            ORDER BY ep.valid_at ASC
+        """
+
+        records, _, _ = await graphiti.driver.execute_query(
+            full_session_query,
+            session_ids=session_ids,
+            group_id=group_id,
+            fact_episode_uuids=entity_edge.episodes,
+        )
+
+        context_episodes = [
+            {
+                'uuid': record['uuid'],
+                'name': record['name'],
+                'content': record['content'],
+                'source_description': record['source_description'],
+                'session_id': record.get('session_id'),
+                'valid_at': parse_db_date(record['valid_at'])
+                if record.get('valid_at')
+                else None,
+                'created_at': parse_db_date(record['created_at'])
+                if record.get('created_at')
+                else None,
+            }
+            for record in records
+        ]
+
+    elif (context_before > 0 or context_after > 0) and fact_episodes:
+        # Get surrounding episodes based on context parameters
+        # For each fact episode, get N episodes before and after based on valid_at
+        context_episode_uuids = set()
+
+        for fact_ep in fact_episodes:
+            if not fact_ep['session_id'] or not fact_ep['valid_at']:
+                continue
+
+            # Query for episodes in the same session around this episode's timestamp
+            context_query = """
+                MATCH (ep:Episodic)
+                WHERE ep.session_id = $session_id
+                  AND ep.group_id = $group_id
+                  AND NOT ep.uuid IN $fact_episode_uuids
+                  AND (
+                    (ep.valid_at < $pivot_time AND ep.valid_at >= $before_time)
+                    OR (ep.valid_at > $pivot_time AND ep.valid_at <= $after_time)
+                  )
+                RETURN ep.uuid AS uuid
+            """
+
+            # Calculate time windows (rough approximation - better to use episode ordering)
+            # For now, we'll do a simpler approach: get all session episodes and filter in Python
+            session_episodes_query = """
+                MATCH (ep:Episodic)
+                WHERE ep.session_id = $session_id
+                  AND ep.group_id = $group_id
+                RETURN ep.uuid AS uuid, ep.name AS name, ep.content AS content,
+                       ep.source_description AS source_description,
+                       ep.session_id AS session_id,
+                       ep.valid_at AS valid_at, ep.created_at AS created_at
+                ORDER BY ep.valid_at ASC
+            """
+
+            records, _, _ = await graphiti.driver.execute_query(
+                session_episodes_query,
+                session_id=fact_ep['session_id'],
+                group_id=group_id,
+            )
+
+            # Find the index of our fact episode and get surrounding ones
+            all_session_eps = [
+                {
+                    'uuid': r['uuid'],
+                    'name': r['name'],
+                    'content': r['content'],
+                    'source_description': r['source_description'],
+                    'session_id': r.get('session_id'),
+                    'valid_at': parse_db_date(r['valid_at']) if r.get('valid_at') else None,
+                    'created_at': parse_db_date(r['created_at'])
+                    if r.get('created_at')
+                    else None,
+                }
+                for r in records
+            ]
+
+            # Find fact episode index
+            fact_ep_indices = [
+                i for i, ep in enumerate(all_session_eps) if ep['uuid'] == fact_ep['uuid']
+            ]
+
+            if fact_ep_indices:
+                idx = fact_ep_indices[0]
+                # Get surrounding episodes
+                start_idx = max(0, idx - context_before)
+                end_idx = min(len(all_session_eps), idx + context_after + 1)
+
+                for i in range(start_idx, end_idx):
+                    ep = all_session_eps[i]
+                    if ep['uuid'] not in entity_edge.episodes:
+                        context_episode_uuids.add(ep['uuid'])
+                        # Store the full episode data
+                        if ep not in context_episodes:
+                            context_episodes.append(ep)
+
+        # Sort context episodes by valid_at
+        context_episodes.sort(key=lambda x: x['valid_at'] or datetime.min)
+
+    # 4. Get session metadata if we have session IDs
+    sessions = []
+    if session_ids:
+        for sid in session_ids:
+            try:
+                session_query = """
+                    MATCH (s:Session {session_id: $session_id, group_id: $group_id})
+                    RETURN s.session_id AS session_id, s.uuid AS uuid,
+                           s.summary AS summary,
+                           s.episode_count AS episode_count,
+                           s.first_episode_date AS first_episode_date,
+                           s.last_episode_date AS last_episode_date
+                """
+                records, _, _ = await graphiti.driver.execute_query(
+                    session_query, session_id=sid, group_id=group_id
+                )
+
+                if records:
+                    r = records[0]
+                    sessions.append(
+                        {
+                            'session_id': r['session_id'],
+                            'uuid': r.get('uuid'),
+                            'summary': r.get('summary'),
+                            'episode_count': r.get('episode_count', 0),
+                            'first_episode_date': parse_db_date(r['first_episode_date'])
+                            if r.get('first_episode_date')
+                            else None,
+                            'last_episode_date': parse_db_date(r['last_episode_date'])
+                            if r.get('last_episode_date')
+                            else None,
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f'Could not fetch session {sid}: {e}')
+
+    return {
+        'fact': get_fact_result_from_edge(entity_edge),
+        'fact_episodes': fact_episodes,
+        'context_episodes': context_episodes,
+        'sessions': sessions,
+    }
+
+
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
 async def get_episodes(
     group_id: str,
