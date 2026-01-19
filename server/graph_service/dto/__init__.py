@@ -1,4 +1,11 @@
 from .common import Message, Result
+from .cypher import (
+    CypherQueryRequest,
+    CypherQueryResult,
+    NodeSchema,
+    RelationshipSchema,
+    SchemaResponse,
+)
 from .graph import (
     EdgeConnectionsResponse,
     GraphConnection,
@@ -42,4 +49,9 @@ __all__ = [
     'GraphConnection',
     'NodeConnectionsResponse',
     'EdgeConnectionsResponse',
+    'CypherQueryRequest',
+    'CypherQueryResult',
+    'NodeSchema',
+    'RelationshipSchema',
+    'SchemaResponse',
 ]
