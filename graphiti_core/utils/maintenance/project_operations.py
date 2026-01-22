@@ -155,3 +155,51 @@ async def link_session_to_project(
             f'{type(e).__name__}: {e}'
         )
         # Don't raise - link failure shouldn't block operations
+
+
+async def link_source_to_project(
+    driver: GraphDriver,
+    source_uuid: str,
+    project_uuid: str,
+) -> None:
+    """
+    Create a relationship between a source and its project.
+
+    Creates a (Source)-[:PART_OF_PROJECT]->(Project) relationship in the graph.
+
+    Parameters
+    ----------
+    driver : GraphDriver
+        The graph database driver
+    source_uuid : str
+        UUID of the source node
+    project_uuid : str
+        UUID of the project node
+
+    Returns
+    -------
+    None
+    """
+    query = """
+        MATCH (s:Source {uuid: $source_uuid})
+        MATCH (p:Project {uuid: $project_uuid})
+        MERGE (s)-[:PART_OF_PROJECT]->(p)
+        RETURN s.uuid AS source_uuid, p.uuid AS project_uuid
+    """
+
+    try:
+        result = await driver.execute_query(
+            query,
+            source_uuid=source_uuid,
+            project_uuid=project_uuid,
+        )
+        logger.debug(
+            f'Linked source {source_uuid} to project {project_uuid}: '
+            f'{len(result[0])} relationships created/verified'
+        )
+    except Exception as e:
+        logger.error(
+            f'Failed to link source {source_uuid} to project {project_uuid}: '
+            f'{type(e).__name__}: {e}'
+        )
+        # Don't raise - link failure shouldn't block operations

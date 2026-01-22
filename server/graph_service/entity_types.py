@@ -182,6 +182,23 @@ class Document(BaseModel):
     ...
 
 
+class Source(BaseModel):
+    """A Source represents where memories come from: files, transcripts, manual entries, or other data providers.
+
+    IMPORTANT: Sources are NOT extracted from content. They are created explicitly when content is imported.
+
+    Instructions for source creation:
+    1. Sources track the origin of content added to the system
+    2. Each import operation should create exactly one Source entity
+    3. Store metadata like filename, file type, upload timestamp
+    4. Link episodes to their Source for traceability
+    5. Support various source types: file, text, session, meeting, etc.
+    6. Preserve original content in attributes for reference
+    """
+
+    ...
+
+
 ENTITY_TYPES: dict[str, BaseModel] = {
     'Person': Person,  # type: ignore
     'Requirement': Requirement,  # type: ignore
@@ -193,4 +210,5 @@ ENTITY_TYPES: dict[str, BaseModel] = {
     'Topic': Topic,  # type: ignore
     'Organization': Organization,  # type: ignore
     'Document': Document,  # type: ignore
+    'Source': Source,  # type: ignore
 }

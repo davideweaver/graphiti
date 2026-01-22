@@ -7,7 +7,13 @@ from fastapi import APIRouter, Depends, status
 from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
-from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
+from graph_service.dto import (
+    AddContentRequest,
+    AddEntityNodeRequest,
+    AddMessagesRequest,
+    Message,
+    Result,
+)
 from graph_service.entity_types import ENTITY_TYPES
 from graph_service.events import get_event_bus
 from graph_service.zep_graphiti import (
@@ -192,6 +198,173 @@ async def add_messages(
     await async_worker.emit_queue_status()
 
     return Result(message='Messages added to processing queue', success=True)
+
+
+@router.post('/content', status_code=status.HTTP_202_ACCEPTED)
+async def add_content(
+    request: AddContentRequest,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
+):
+    """Add content with source tracking.
+
+    This endpoint:
+    1. Creates a Source node to track where the content came from
+    2. Links Source to Project via PART_OF_PROJECT relationship
+    3. Creates an episode from the content (async)
+    4. Links episode to Source via FROM_SOURCE relationship
+    5. Links episode to Project via IN_PROJECT relationship (handled by Graphiti)
+    6. Extracts facts and entities via Graphiti (async)
+
+    Returns the source_uuid for tracking extraction progress.
+    """
+    import uuid as uuid_lib
+    from datetime import datetime, timezone
+
+    logger.debug(
+        f'POST /content - Received content for group_id={request.group_id}, '
+        f'source_name={request.source_name}, source_type={request.source_type}'
+    )
+
+    # Generate UUID for Source entity
+    source_uuid = str(uuid_lib.uuid4())
+
+    # Determine project name (lowercase, default to "_general" if None)
+    project_name = request.project_name.lower() if request.project_name else '_general'
+
+    source_summary = f'{request.source_type.title()} source: {request.source_name}'
+
+    # Create Source node using direct Cypher query with custom labels and attributes
+    # Sources are NOT entities - they're metadata nodes like Episodes
+    # We can't use save_entity_node() because it doesn't support custom labels or attributes
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    create_source_query = '''
+        CREATE (s:Source {
+            uuid: $uuid,
+            name: $name,
+            group_id: $group_id,
+            summary: $summary,
+            source_type: $source_type,
+            created_at: $created_at
+        })
+        SET s += $metadata
+        RETURN s
+    '''
+
+    await graphiti.driver.execute_query(
+        create_source_query,
+        uuid=source_uuid,
+        name=request.source_name,
+        group_id=request.group_id,
+        summary=source_summary,
+        source_type=request.source_type,
+        created_at=now_iso,
+        metadata=request.source_metadata,
+    )
+
+    logger.info(f'Created Source entity: uuid={source_uuid}, name={request.source_name}')
+
+    # Link Source to Project
+    try:
+        from graphiti_core.utils.maintenance.project_operations import (
+            get_or_create_project_node,
+            link_source_to_project,
+        )
+
+        # Get or create project node
+        project_node = await get_or_create_project_node(
+            driver=graphiti.driver,
+            group_id=request.group_id,
+            project_name=project_name,
+            project_path=None,
+        )
+
+        # Save project node
+        await project_node.save(graphiti.driver)
+
+        # Link source to project
+        await link_source_to_project(
+            driver=graphiti.driver,
+            source_uuid=source_uuid,
+            project_uuid=project_node.uuid,
+        )
+
+        logger.info(f'Linked source {source_uuid} to project {project_name}')
+
+    except Exception as e:
+        # Don't block content ingestion if project link fails
+        logger.error(
+            f'Failed to link source {source_uuid} to project {project_name}: '
+            f'{type(e).__name__}: {e}'
+        )
+
+    # Queue content processing task
+    async def process_content_task():
+        logger.debug(f'Task - Processing content from source: {source_uuid}')
+
+        try:
+            # Create episode from content
+            # Let Graphiti generate the UUID by passing None
+            results = await graphiti.add_episode_with_events(
+                uuid=None,  # Let Graphiti generate UUID
+                group_id=request.group_id,
+                name=f'Content from {request.source_name}',
+                episode_body=request.content,
+                reference_time=datetime.now(timezone.utc),
+                source=EpisodeType.message,
+                source_description=f'{request.source_type}:{request.source_name}',
+                session_id=None,  # Content imports don't use sessions
+                project_name=project_name,
+                project_path=None,
+                skip_extraction=False,  # Always extract facts/entities
+                entity_types=ENTITY_TYPES,
+            )
+
+            episode_uuid = results.episode.uuid
+            logger.info(
+                f'Created episode: uuid={episode_uuid} for source={source_uuid}'
+            )
+
+            # Create FROM_SOURCE relationship (episode → source)
+            # Note: This requires adding the relationship via a custom Cypher query
+            # since graphiti doesn't have a built-in method for this
+            await graphiti.driver.execute_query(
+                '''
+                MATCH (e:Episodic {uuid: $episode_uuid, group_id: $group_id})
+                MATCH (s:Source {uuid: $source_uuid, group_id: $group_id})
+                CREATE (e)-[:FROM_SOURCE {created_at: $created_at}]->(s)
+                ''',
+                episode_uuid=episode_uuid,
+                source_uuid=source_uuid,
+                group_id=request.group_id,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+            logger.info(f'Created FROM_SOURCE relationship: {episode_uuid} -> {source_uuid}')
+
+            logger.debug(f'Task - Content processing complete for source: {source_uuid}')
+
+        except Exception as e:
+            logger.error(
+                f'Task - Failed to process content from source {source_uuid}: '
+                f'{type(e).__name__}: {e}'
+            )
+            raise
+
+    # Queue the processing task
+    await async_worker.queue.put(process_content_task)
+    logger.debug(
+        f'POST /content - Queued content processing (queue size now: {async_worker.queue.qsize()})'
+    )
+
+    # Emit queue status
+    await async_worker.emit_queue_status()
+
+    return {
+        'source_uuid': source_uuid,
+        'message': 'Content queued for processing',
+        'success': True,
+    }
 
 
 @router.post('/entity-node', status_code=status.HTTP_201_CREATED)

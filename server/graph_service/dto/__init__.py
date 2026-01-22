@@ -13,7 +13,7 @@ from .graph import (
     GraphNode,
     NodeConnectionsResponse,
 )
-from .ingest import AddEntityNodeRequest, AddMessagesRequest
+from .ingest import AddContentRequest, AddEntityNodeRequest, AddMessagesRequest
 from .retrieve import (
     DaySessionCount,
     EntityListResponse,
@@ -26,12 +26,14 @@ from .retrieve import (
     SessionListResponse,
     SessionResponse,
     SessionStatsByDayResponse,
+    SourceExtractionResultsResponse,
 )
 
 __all__ = [
     'SearchQuery',
     'Message',
     'AddMessagesRequest',
+    'AddContentRequest',
     'AddEntityNodeRequest',
     'SearchResults',
     'FactResult',
@@ -44,6 +46,7 @@ __all__ = [
     'SessionListResponse',
     'DaySessionCount',
     'SessionStatsByDayResponse',
+    'SourceExtractionResultsResponse',
     'GraphNode',
     'GraphEdge',
     'GraphConnection',
