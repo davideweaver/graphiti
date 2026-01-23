@@ -217,6 +217,19 @@ class OpenAIGenericClient(LLMClient):
                     logger.error(f'Could not auto-wrap: no array property found in schema')
                     logger.error(f'Response preview: {str(parsed_result)[:500]}')
 
+            # Handle empty dict responses - add missing required array properties
+            elif isinstance(parsed_result, dict) and response_model is not None:
+                schema = response_model.model_json_schema()
+                required = schema.get('required', [])
+                properties = schema.get('properties', {})
+
+                # Check for missing required array properties
+                for req_field in required:
+                    if req_field not in parsed_result and properties.get(req_field, {}).get('type') == 'array':
+                        # Model returned {} instead of {field: []} - add empty array
+                        parsed_result[req_field] = []
+                        logger.info(f'Added missing required array field "{req_field}" with empty array')
+
             return parsed_result
         except openai.RateLimitError as e:
             raise RateLimitError from e
