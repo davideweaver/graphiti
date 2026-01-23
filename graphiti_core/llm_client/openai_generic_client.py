@@ -175,6 +175,21 @@ class OpenAIGenericClient(LLMClient):
 
             logger.debug(f'LLM Response - received {len(result)} characters')
 
+            # Strip markdown code blocks (Ollama cloud models wrap JSON in ```json...```)
+            if result.strip().startswith('```'):
+                # Remove markdown code block wrapper
+                result = result.strip()
+                # Remove opening ```json or ```
+                if result.startswith('```json'):
+                    result = result[7:]
+                elif result.startswith('```'):
+                    result = result[3:]
+                # Remove closing ```
+                if result.endswith('```'):
+                    result = result[:-3]
+                result = result.strip()
+                logger.info('Stripped markdown code block wrapper from response')
+
             # Parse JSON and handle GPT-OSS list responses
             parsed_result = json.loads(result)
 
