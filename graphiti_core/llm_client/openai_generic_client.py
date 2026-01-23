@@ -174,6 +174,7 @@ class OpenAIGenericClient(LLMClient):
                     logger.info('Using reasoning field for response (GPT-OSS model)')
 
             logger.debug(f'LLM Response - received {len(result)} characters')
+            logger.debug(f'LLM Response - raw content preview: {result[:500]}')
 
             # Strip markdown code blocks (Ollama cloud models wrap JSON in ```json...```)
             if result.strip().startswith('```'):
@@ -192,6 +193,7 @@ class OpenAIGenericClient(LLMClient):
 
             # Parse JSON and handle GPT-OSS list responses
             parsed_result = json.loads(result)
+            logger.debug(f'Parsed JSON type: {type(parsed_result).__name__}, keys: {list(parsed_result.keys()) if isinstance(parsed_result, dict) else "N/A"}')
 
             # GPT-OSS sometimes returns bare arrays instead of wrapped objects
             # Auto-wrap if response_model expects an object with array properties
