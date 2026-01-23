@@ -171,10 +171,38 @@ class OpenAIGenericClient(LLMClient):
 
                 if reasoning:
                     result = reasoning
-                    logger.debug('Using reasoning field for response (GPT-OSS model)')
+                    logger.info('Using reasoning field for response (GPT-OSS model)')
 
             logger.debug(f'LLM Response - received {len(result)} characters')
-            return json.loads(result)
+
+            # Parse JSON and handle GPT-OSS list responses
+            parsed_result = json.loads(result)
+
+            # GPT-OSS sometimes returns bare arrays instead of wrapped objects
+            # Auto-wrap if response_model expects an object with array properties
+            if not isinstance(parsed_result, dict) and response_model is not None:
+                logger.info(f'GPT-OSS returned {type(parsed_result).__name__}, attempting auto-wrap')
+
+                # Get the schema to find array property names
+                schema = response_model.model_json_schema()
+                properties = schema.get('properties', {})
+
+                # Find the first array property
+                array_prop_name = None
+                for prop_name, prop_schema in properties.items():
+                    if prop_schema.get('type') == 'array':
+                        array_prop_name = prop_name
+                        break
+
+                if array_prop_name and isinstance(parsed_result, list):
+                    # Wrap the list in the expected property
+                    parsed_result = {array_prop_name: parsed_result}
+                    logger.info(f'Auto-wrapped list in "{array_prop_name}" property')
+                else:
+                    logger.error(f'Could not auto-wrap: no array property found in schema')
+                    logger.error(f'Response preview: {str(parsed_result)[:500]}')
+
+            return parsed_result
         except openai.RateLimitError as e:
             raise RateLimitError from e
         except Exception as e:
