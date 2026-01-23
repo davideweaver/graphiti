@@ -152,7 +152,27 @@ class OpenAIGenericClient(LLMClient):
                 max_tokens=self.max_tokens,
                 response_format=response_format,  # type: ignore[arg-type]
             )
-            result = response.choices[0].message.content or ''
+            # Handle both standard content field and reasoning field (for GPT-OSS models)
+            message = response.choices[0].message
+            result = message.content or ''
+
+            # If content is empty, check for reasoning field (GPT-OSS compatibility)
+            if not result:
+                # Try multiple access patterns for reasoning field
+                reasoning = None
+                if hasattr(message, 'reasoning'):
+                    reasoning = message.reasoning
+                elif hasattr(message, 'model_dump'):
+                    # Pydantic v2 models
+                    reasoning = message.model_dump().get('reasoning')
+                elif hasattr(message, 'dict'):
+                    # Pydantic v1 models
+                    reasoning = message.dict().get('reasoning')
+
+                if reasoning:
+                    result = reasoning
+                    logger.debug('Using reasoning field for response (GPT-OSS model)')
+
             logger.debug(f'LLM Response - received {len(result)} characters')
             return json.loads(result)
         except openai.RateLimitError as e:
