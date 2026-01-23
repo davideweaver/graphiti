@@ -9,7 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 logger = logging.getLogger(__name__)
 from graphiti_core.errors import NodeNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
-from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF  # type: ignore
+from graphiti_core.search.search_config_recipes import (  # type: ignore
+    EDGE_HYBRID_SEARCH_NODE_DISTANCE,
+    EDGE_HYBRID_SEARCH_RRF,
+)
 from graphiti_core.search.search_filters import (  # type: ignore
     ComparisonOperator,
     DateFilter,
@@ -21,6 +24,8 @@ from graph_service.dto import (
     EntityListResponse,
     GetMemoryRequest,
     GetMemoryResponse,
+    GroupInfo,
+    GroupsListResponse,
     Message,
     SearchQuery,
     SearchResults,
@@ -38,6 +43,89 @@ from graph_service.zep_graphiti import (
 )
 
 router = APIRouter()
+
+
+@router.get('/groups', status_code=status.HTTP_200_OK)
+async def list_groups() -> GroupsListResponse:
+    """List all available groups (graphs) in the database.
+
+    Returns a list of group IDs with their entity, episode, and fact counts.
+    Each group_id corresponds to a separate FalkorDB database.
+    """
+    from graph_service.config import get_settings
+    from falkordb.asyncio import FalkorDB
+
+    settings = get_settings()
+
+    try:
+        # Extract host and port from URI
+        uri = settings.neo4j_uri
+        if not uri.startswith('falkordb://'):
+            logger.error('list_groups only works with FalkorDB')
+            return GroupsListResponse(groups=[], total=0)
+
+        host_port = uri.replace('falkordb://', '').split('/')[0]
+        parts = host_port.split(':')
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 6379
+
+        # Create FalkorDB client
+        falkor_client = FalkorDB(
+            host=host,
+            port=port,
+            username=settings.neo4j_user if settings.neo4j_user != 'default' else None,
+            password=settings.neo4j_password if settings.neo4j_password != 'password' else None,
+        )
+
+        # List all databases (graphs)
+        database_names = await falkor_client.list_graphs()
+        logger.info(f'Found {len(database_names)} databases: {database_names}')
+
+        groups = []
+        for db_name in database_names:
+            # Get a graphiti instance for this specific database
+            from graph_service.zep_graphiti import get_or_create_graphiti_instance
+            graphiti = await get_or_create_graphiti_instance(db_name)
+
+            # Count entities
+            entity_query = """
+            MATCH (e:Entity)
+            RETURN count(e) AS count
+            """
+            entity_records, _, _ = await graphiti.driver.execute_query(entity_query)
+            entity_count = entity_records[0]['count'] if entity_records else 0
+
+            # Count episodes
+            episode_query = """
+            MATCH (ep:Episodic)
+            RETURN count(ep) AS count
+            """
+            episode_records, _, _ = await graphiti.driver.execute_query(episode_query)
+            episode_count = episode_records[0]['count'] if episode_records else 0
+
+            # Count facts
+            fact_query = """
+            MATCH ()-[f:RELATES_TO]->()
+            RETURN count(f) AS count
+            """
+            fact_records, _, _ = await graphiti.driver.execute_query(fact_query)
+            fact_count = fact_records[0]['count'] if fact_records else 0
+
+            groups.append(GroupInfo(
+                group_id=db_name,
+                entity_count=entity_count,
+                episode_count=episode_count,
+                fact_count=fact_count,
+            ))
+
+        return GroupsListResponse(
+            groups=groups,
+            total=len(groups),
+        )
+    except Exception as e:
+        logger.error(f'Failed to list groups: {e}', exc_info=True)
+        # Return empty list on error rather than failing
+        return GroupsListResponse(groups=[], total=0)
 
 
 def extract_preview(content: str | None, max_chars: int = 200) -> str | None:
@@ -86,13 +174,22 @@ async def search(
             )
         search_filter.valid_at = [date_filters]
 
+    # Choose search config based on whether node-centered search is requested
+    # Node distance reranker is required when center_node_uuid is provided
+    search_config = (
+        EDGE_HYBRID_SEARCH_NODE_DISTANCE
+        if query.center_node_uuid
+        else EDGE_HYBRID_SEARCH_RRF
+    )
+
     # Use search_() for full SearchResults with similarity scores
     # (search() only returns edges, discarding scores)
     search_results = await graphiti.search_(
         query=query.query,
-        config=EDGE_HYBRID_SEARCH_RRF,  # Hybrid search with RRF reranking
+        config=search_config,
         group_ids=[query.group_id],
         search_filter=search_filter,
+        center_node_uuid=query.center_node_uuid,
     )
 
     # Extract edges and their corresponding similarity scores
@@ -913,6 +1010,65 @@ async def get_entity_relationships(
         return EntityListResponse(entities=[], total=0, has_more=False, cursor=None)
 
 
+@router.get('/entities/{group_id}/{uuid}/facts', status_code=status.HTTP_200_OK)
+async def get_entity_facts(
+    group_id: str,
+    uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    limit: int = Query(50, ge=1, le=500, description='Maximum number of facts to return'),
+):
+    """Get facts (entity edges) structurally connected to this entity.
+
+    Returns all RELATES_TO edges where this entity is either the source or target,
+    sorted by creation date (most recent first).
+    """
+    from graphiti_core.helpers import parse_db_date
+
+    # Query for RELATES_TO edges where entity is source or target
+    query = """
+    MATCH (e:Entity {uuid: $uuid, group_id: $group_id})
+    MATCH (e)-[r:RELATES_TO]-(other:Entity)
+    RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+           r.valid_at AS valid_at, r.invalid_at AS invalid_at,
+           r.created_at AS created_at, r.expired_at AS expired_at,
+           r.source_node_uuid AS source_node_uuid,
+           r.target_node_uuid AS target_node_uuid
+    ORDER BY r.created_at DESC
+    LIMIT $limit
+    """
+
+    try:
+        records, _, _ = await graphiti.driver.execute_query(
+            query,
+            uuid=uuid,
+            group_id=group_id,
+            limit=limit,
+        )
+
+        facts = []
+        for record in records:
+            facts.append({
+                'uuid': record['uuid'],
+                'name': record['name'],
+                'fact': record['fact'],
+                'valid_at': parse_db_date(record['valid_at']) if record.get('valid_at') else None,
+                'invalid_at': parse_db_date(record['invalid_at']) if record.get('invalid_at') else None,
+                'created_at': parse_db_date(record['created_at']) if record.get('created_at') else None,
+                'expired_at': parse_db_date(record['expired_at']) if record.get('expired_at') else None,
+                'source_node_uuid': record.get('source_node_uuid'),
+                'target_node_uuid': record.get('target_node_uuid'),
+                'similarity_score': None,
+            })
+
+        return SearchResults(facts=facts)
+
+    except Exception as e:
+        logger.error(f'Error fetching facts for entity {uuid}: {e}')
+        import traceback
+        logger.error(traceback.format_exc())
+        return SearchResults(facts=[])
+
+
 @router.get('/sessions/{group_id}', status_code=status.HTTP_200_OK)
 async def list_sessions(
     group_id: str,
@@ -1676,4 +1832,166 @@ async def get_project_entities(
         'total': total_count,
         'has_more': len(entities) == limit and offset + limit < total_count,
         'cursor': next_cursor,
+    }
+
+
+@router.get(
+    '/sources/{group_id}/{source_uuid}/extraction-results',
+    status_code=status.HTTP_200_OK,
+)
+async def get_source_extraction_results(
+    group_id: str,
+    source_uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+):
+    """Get extraction results for a source.
+
+    Returns:
+    - source: The Source entity with metadata
+    - episodes: Episodes created from this source
+    - facts: Facts extracted from those episodes
+    - entities: Entities extracted from those episodes
+    - processing_complete: Whether extraction is finished (queue is empty)
+    """
+    from graphiti_core.helpers import parse_db_date
+    from graph_service.routers.ingest import async_worker
+
+    # Get Source node (Sources are NOT entities - they're metadata nodes like Episodes)
+    source_query = '''
+        MATCH (s:Source {uuid: $source_uuid, group_id: $group_id})
+        RETURN s.uuid AS uuid, s.name AS name, s.group_id AS group_id,
+               s.summary AS summary, labels(s) AS labels,
+               s.created_at AS created_at, properties(s) AS attributes
+    '''
+
+    records, _, _ = await graphiti.driver.execute_query(
+        source_query, source_uuid=source_uuid, group_id=group_id
+    )
+
+    if not records:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Source with uuid {source_uuid} not found',
+        )
+
+    source_record = records[0]
+    source_entity = {
+        'uuid': source_record['uuid'],
+        'name': source_record['name'],
+        'group_id': source_record['group_id'],
+        'summary': source_record.get('summary', ''),
+        'labels': source_record.get('labels', []),
+        'attributes': source_record.get('attributes', {}),
+        'created_at': parse_db_date(source_record['created_at']) if source_record.get('created_at') else None,
+    }
+
+    # Get episodes linked via FROM_SOURCE relationship
+    episodes_query = '''
+        MATCH (s:Source {uuid: $source_uuid, group_id: $group_id})
+        MATCH (e:Episodic)-[:FROM_SOURCE]->(s)
+        RETURN e.uuid AS uuid, e.name AS name, e.content AS content,
+               e.source_description AS source_description,
+               e.session_id AS session_id, e.timestamp AS timestamp,
+               e.valid_at AS valid_at, e.created_at AS created_at,
+               e.group_id AS group_id
+        ORDER BY e.created_at DESC
+    '''
+
+    records, _, _ = await graphiti.driver.execute_query(
+        episodes_query, source_uuid=source_uuid, group_id=group_id
+    )
+
+    episodes = []
+    episode_uuids = []
+    for record in records:
+        episode_uuids.append(record['uuid'])
+        episodes.append({
+            'uuid': record['uuid'],
+            'name': record['name'],
+            'content': record['content'],
+            'source_description': record.get('source_description', ''),
+            'session_id': record.get('session_id', ''),
+            'timestamp': parse_db_date(record['timestamp']) if record.get('timestamp') else None,
+            'valid_at': parse_db_date(record['valid_at']) if record.get('valid_at') else None,
+            'created_at': parse_db_date(record['created_at']) if record.get('created_at') else None,
+            'group_id': record['group_id'],
+        })
+
+    # Get facts (entity edges) extracted from those episodes
+    facts = []
+    if episode_uuids:
+        facts_query = '''
+            MATCH (e:Episodic)-[:MENTIONS]->(entity:Entity)
+            MATCH (entity)-[r:RELATES_TO]-(other:Entity)
+            WHERE e.uuid IN $episode_uuids AND e.group_id = $group_id
+            RETURN DISTINCT r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                   r.valid_at AS valid_at, r.invalid_at AS invalid_at,
+                   r.created_at AS created_at, r.expired_at AS expired_at,
+                   r.source_node_uuid AS source_node_uuid,
+                   r.target_node_uuid AS target_node_uuid
+            ORDER BY r.created_at DESC
+        '''
+
+        fact_records, _, _ = await graphiti.driver.execute_query(
+            facts_query, episode_uuids=episode_uuids, group_id=group_id
+        )
+
+        for record in fact_records:
+            facts.append({
+                'uuid': record['uuid'],
+                'name': record['name'],
+                'fact': record['fact'],
+                'valid_at': parse_db_date(record['valid_at']) if record.get('valid_at') else None,
+                'invalid_at': parse_db_date(record['invalid_at']) if record.get('invalid_at') else None,
+                'created_at': parse_db_date(record['created_at']) if record.get('created_at') else None,
+                'expired_at': parse_db_date(record['expired_at']) if record.get('expired_at') else None,
+                'source_node_uuid': record.get('source_node_uuid'),
+                'target_node_uuid': record.get('target_node_uuid'),
+                'similarity_score': None,
+            })
+
+    # Get entities extracted from those episodes
+    entities = []
+    if episode_uuids:
+        entities_query = '''
+            MATCH (e:Episodic)-[:MENTIONS]->(n:Entity)
+            WHERE e.uuid IN $episode_uuids AND e.group_id = $group_id
+              AND NOT n:Source
+            RETURN DISTINCT n.uuid AS uuid, n.name AS name,
+                   n.group_id AS group_id, n.summary AS summary,
+                   labels(n) AS labels, n.created_at AS created_at,
+                   properties(n) AS attributes
+            ORDER BY n.created_at DESC
+        '''
+
+        entity_records, _, _ = await graphiti.driver.execute_query(
+            entities_query, episode_uuids=episode_uuids, group_id=group_id
+        )
+
+        for record in entity_records:
+            # Filter out 'Entity' from labels
+            entity_labels = [label for label in record.get('labels', []) if label != 'Entity']
+
+            entities.append({
+                'uuid': record['uuid'],
+                'name': record['name'],
+                'group_id': record['group_id'],
+                'summary': record.get('summary', ''),
+                'labels': entity_labels,
+                'attributes': record.get('attributes', {}),
+                'created_at': parse_db_date(record['created_at']) if record.get('created_at') else None,
+            })
+
+    # Check if processing is complete (queue is empty and nothing processing)
+    async with async_worker._processing_lock:
+        processing_count = async_worker.processing_count
+    queue_size = async_worker.queue.qsize()
+    processing_complete = (queue_size == 0 and processing_count == 0)
+
+    return {
+        'source': source_entity,
+        'episodes': episodes,
+        'facts': facts,
+        'entities': entities,
+        'processing_complete': processing_complete,
     }

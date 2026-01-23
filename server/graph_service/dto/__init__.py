@@ -1,4 +1,4 @@
-from .common import Message, Result
+from .common import GroupInfo, GroupsListResponse, Message, Result
 from .cypher import (
     CypherQueryRequest,
     CypherQueryResult,
@@ -13,7 +13,7 @@ from .graph import (
     GraphNode,
     NodeConnectionsResponse,
 )
-from .ingest import AddContentRequest, AddEntityNodeRequest, AddMessagesRequest
+from .ingest import AddContentRequest, AddEntityNodeRequest, AddMessagesRequest, UpdateEntityEdgeRequest
 from .retrieve import (
     DaySessionCount,
     EntityListResponse,
@@ -34,6 +34,7 @@ __all__ = [
     'AddMessagesRequest',
     'AddContentRequest',
     'AddEntityNodeRequest',
+    'UpdateEntityEdgeRequest',
     'SearchResults',
     'FactResult',
     'Result',
@@ -55,4 +56,6 @@ __all__ = [
     'NodeSchema',
     'RelationshipSchema',
     'SchemaResponse',
+    'GroupInfo',
+    'GroupsListResponse',
 ]

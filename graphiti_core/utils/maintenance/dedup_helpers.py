@@ -35,6 +35,13 @@ _FUZZY_JACCARD_THRESHOLD = 0.9
 _MINHASH_PERMUTATIONS = 32
 _MINHASH_BAND_SIZE = 4
 
+# Entity alias mapping: maps specific entity names to their canonical form
+# Format: {normalized_alias: normalized_canonical}
+_ENTITY_ALIASES = {
+    'dave weaver': 'user',
+    'david weaver': 'user',
+}
+
 
 def _normalize_string_exact(name: str) -> str:
     """Lowercase text and collapse whitespace so equal names map to the same key."""
@@ -204,6 +211,48 @@ def _resolve_with_similarity(
     for idx, node in enumerate(extracted_nodes):
         normalized_exact = _normalize_string_exact(node.name)
         normalized_fuzzy = _normalize_name_for_fuzzy(node.name)
+
+        # Check entity aliases first - map aliases to their canonical entity
+        if normalized_exact in _ENTITY_ALIASES:
+            canonical_name = _ENTITY_ALIASES[normalized_exact]
+
+            # First check existing entities in database
+            existing_matches = indexes.normalized_existing.get(canonical_name, [])
+            if existing_matches:
+                # Resolve to the first (oldest) matching canonical entity
+                match = existing_matches[0]
+                state.resolved_nodes[idx] = match
+                state.uuid_map[node.uuid] = match.uuid
+                if match.uuid != node.uuid:
+                    state.duplicate_pairs.append((node, match))
+                continue
+
+            # Also check if canonical name exists in current extraction batch
+            for other_idx, other_node in enumerate(extracted_nodes):
+                if _normalize_string_exact(other_node.name) == canonical_name:
+                    # Resolve to the entity from current batch
+                    state.resolved_nodes[idx] = other_node
+                    state.uuid_map[node.uuid] = other_node.uuid
+                    if other_node.uuid != node.uuid:
+                        state.duplicate_pairs.append((node, other_node))
+                    break
+            else:
+                # No match found - entity will be created but with canonical name
+                # Update the node's name to the canonical form
+                node.name = canonical_name.title() if canonical_name == "user" else canonical_name
+            continue
+
+        # Special case: always deduplicate "user" entities regardless of entropy
+        if normalized_exact == "user":
+            existing_matches = indexes.normalized_existing.get(normalized_exact, [])
+            if existing_matches:
+                # Always resolve to the first (oldest) matching "user" entity
+                match = existing_matches[0]
+                state.resolved_nodes[idx] = match
+                state.uuid_map[node.uuid] = match.uuid
+                if match.uuid != node.uuid:
+                    state.duplicate_pairs.append((node, match))
+                continue
 
         if not _has_high_entropy(normalized_fuzzy):
             state.unresolved_indices.append(idx)

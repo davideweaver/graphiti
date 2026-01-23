@@ -193,6 +193,52 @@ class ZepGraphiti(Graphiti):
             },
         )
 
+    async def update_entity_edge(self, uuid: str, fact: str, group_id: str):
+        """Update an entity edge (fact) with new fact text.
+
+        Updates the fact text and regenerates the embedding for semantic search.
+
+        Args:
+            uuid: UUID of the edge to update
+            fact: New fact text
+            group_id: Group ID for validation
+
+        Raises:
+            HTTPException: 404 if edge not found, 400 if group_id mismatch
+        """
+        try:
+            edge = await EntityEdge.get_by_uuid(self.driver, uuid)
+
+            # Validate group_id
+            if edge.group_id != group_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'Edge {uuid} does not belong to group {group_id}'
+                )
+
+            # Update the fact text
+            edge.fact = fact
+
+            # Regenerate the embedding for the new fact text
+            # This is crucial for semantic search to work correctly
+            await edge.generate_embedding(self.embedder)
+
+            # Save the updated edge (MERGE handles update)
+            await edge.save(self.driver)
+
+            # Emit event for WebSocket notifications
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                event_type='edge.updated',
+                group_id=edge.group_id,
+                data={
+                    'uuid': uuid,
+                    'fact': fact,
+                },
+            )
+        except EdgeNotFoundError as e:
+            raise HTTPException(status_code=404, detail=e.message) from e
+
     async def delete_entity_edge(self, uuid: str):
         try:
             edge = await EntityEdge.get_by_uuid(self.driver, uuid)
@@ -222,6 +268,41 @@ class ZepGraphiti(Graphiti):
                 group_id=group_id,
                 data={'uuid': uuid},
             )
+        except NodeNotFoundError as e:
+            raise HTTPException(status_code=404, detail=e.message) from e
+
+    async def delete_entity_node(self, uuid: str):
+        """Delete an entity node by UUID.
+
+        This will cascade-delete all edges (RELATES_TO relationships) connected to this entity.
+        Emits a WebSocket event for real-time updates.
+
+        Args:
+            uuid: UUID of the entity to delete
+
+        Raises:
+            HTTPException: 404 if entity not found
+        """
+        try:
+            entity = await EntityNode.get_by_uuid(self.driver, uuid)
+            group_id = entity.group_id  # Capture before delete
+            entity_name = entity.name  # Capture for event data
+
+            # Delete the entity node (cascade removes all connected edges automatically)
+            await entity.delete(self.driver)
+
+            # Emit event for WebSocket notifications
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                event_type='entity.deleted',
+                group_id=group_id,
+                data={
+                    'uuid': uuid,
+                    'name': entity_name,
+                },
+            )
+
+            logger.info(f'Deleted entity: uuid={uuid}, name={entity_name}, group_id={group_id}')
         except NodeNotFoundError as e:
             raise HTTPException(status_code=404, detail=e.message) from e
 

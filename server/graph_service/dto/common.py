@@ -10,6 +10,18 @@ class Result(BaseModel):
     success: bool
 
 
+class GroupInfo(BaseModel):
+    group_id: str = Field(..., description='The group ID')
+    entity_count: int = Field(0, description='Number of entities in this group')
+    episode_count: int = Field(0, description='Number of episodes in this group')
+    fact_count: int = Field(0, description='Number of facts (edges) in this group')
+
+
+class GroupsListResponse(BaseModel):
+    groups: list[GroupInfo] = Field(..., description='List of available groups')
+    total: int = Field(..., description='Total number of groups')
+
+
 class Message(BaseModel):
     content: str = Field(..., description='The content of the message')
     uuid: str | None = Field(default=None, description='The uuid of the message (optional)')

@@ -32,3 +32,8 @@ class AddEntityNodeRequest(BaseModel):
     group_id: str = Field(..., description='The group id of the node to add')
     name: str = Field(..., description='The name of the node to add')
     summary: str = Field(default='', description='The summary of the node to add')
+
+
+class UpdateEntityEdgeRequest(BaseModel):
+    fact: str = Field(..., description='The updated fact text')
+    group_id: str = Field(..., description='The group id of the edge')

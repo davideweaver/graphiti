@@ -16,6 +16,9 @@ class SearchQuery(BaseModel):
     end_date: datetime | None = Field(
         None, description='Filter facts with valid_at <= this datetime (ISO 8601)'
     )
+    center_node_uuid: str | None = Field(
+        None, description='Filter search results to facts connected to this entity node UUID'
+    )
 
 
 class EntityNodeResponse(BaseModel):
@@ -164,3 +167,13 @@ class ProjectStatsByDayResponse(BaseModel):
 
     stats: list[DayProjectActivity]
     total_days: int
+
+
+class SourceExtractionResultsResponse(BaseModel):
+    """Response model for source extraction results."""
+
+    source: EntityNodeResponse  # The Source entity
+    episodes: list[EpisodeResponse]  # Episodes created from the source
+    facts: list[FactResult]  # Facts extracted from the source
+    entities: list[EntityNodeResponse]  # Entities extracted from the source
+    processing_complete: bool  # Whether extraction is finished

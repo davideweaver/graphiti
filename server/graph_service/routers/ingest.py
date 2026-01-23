@@ -13,6 +13,7 @@ from graph_service.dto import (
     AddMessagesRequest,
     Message,
     Result,
+    UpdateEntityEdgeRequest,
 )
 from graph_service.entity_types import ENTITY_TYPES
 from graph_service.events import get_event_bus
@@ -318,6 +319,7 @@ async def add_content(
                 project_path=None,
                 skip_extraction=False,  # Always extract facts/entities
                 entity_types=ENTITY_TYPES,
+                previous_episode_uuids=[],  # No previous context for external content
             )
 
             episode_uuid = results.episode.uuid
@@ -381,6 +383,27 @@ async def add_entity_node(
     return node
 
 
+@router.patch('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
+async def update_entity_edge(
+    uuid: str,
+    request: UpdateEntityEdgeRequest,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_body)],
+):
+    """Update an entity edge (fact) by UUID.
+
+    Currently supports updating the fact text.
+
+    Args:
+        uuid: UUID of the entity edge to update
+        request: Update request with fact text and group_id
+
+    Returns:
+        Result with success status
+    """
+    await graphiti.update_entity_edge(uuid, request.fact, request.group_id)
+    return Result(message='Entity Edge updated', success=True)
+
+
 @router.delete('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
 async def delete_entity_edge(
     uuid: str,
@@ -408,6 +431,31 @@ async def delete_episode(
 ):
     await graphiti.delete_episodic_node(uuid)
     return Result(message='Episode deleted', success=True)
+
+
+@router.delete('/entities/{group_id}/{uuid}', status_code=status.HTTP_200_OK)
+async def delete_entity(
+    group_id: str,
+    uuid: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+):
+    """Delete an entity node by UUID.
+
+    This will cascade-delete all edges (RELATES_TO relationships) connected to this entity.
+    A WebSocket event will be emitted for real-time updates.
+
+    Args:
+        group_id: The group ID
+        uuid: UUID of the entity to delete
+
+    Returns:
+        Success confirmation message
+
+    Raises:
+        HTTPException: 404 if entity not found
+    """
+    await graphiti.delete_entity_node(uuid)
+    return Result(message='Entity deleted', success=True)
 
 
 @router.post('/clear', status_code=status.HTTP_200_OK)
