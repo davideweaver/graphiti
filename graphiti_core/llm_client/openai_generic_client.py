@@ -195,6 +195,26 @@ class OpenAIGenericClient(LLMClient):
             parsed_result = json.loads(result)
             logger.debug(f'Parsed JSON type: {type(parsed_result).__name__}, keys: {list(parsed_result.keys()) if isinstance(parsed_result, dict) else "N/A"}')
 
+            # Normalize field names (GPT-OSS uses entity_name instead of name)
+            def normalize_field_names(obj):
+                """Recursively normalize field names in parsed JSON"""
+                if isinstance(obj, dict):
+                    normalized = {}
+                    for key, value in obj.items():
+                        # Map common field name variations
+                        if key == 'entity_name':
+                            normalized['name'] = normalize_field_names(value)
+                            logger.debug(f'Normalized field: entity_name -> name')
+                        else:
+                            normalized[key] = normalize_field_names(value)
+                    return normalized
+                elif isinstance(obj, list):
+                    return [normalize_field_names(item) for item in obj]
+                else:
+                    return obj
+
+            parsed_result = normalize_field_names(parsed_result)
+
             # GPT-OSS sometimes returns bare arrays instead of wrapped objects
             # Auto-wrap if response_model expects an object with array properties
             if not isinstance(parsed_result, dict) and response_model is not None:
