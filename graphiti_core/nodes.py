@@ -1107,6 +1107,11 @@ def get_session_node_from_record(record: Any) -> SessionNode:
     if intents is None:
         intents = []
 
+    # Handle case where programmatic might be None (backwards compatibility)
+    programmatic = record.get('programmatic', False)
+    if programmatic is None:
+        programmatic = False
+
     return SessionNode(
         uuid=record['uuid'],
         name=record['name'],
@@ -1119,7 +1124,7 @@ def get_session_node_from_record(record: Any) -> SessionNode:
         first_episode_date=first_episode_date,
         last_episode_date=last_episode_date,
         source_descriptions=source_descriptions,
-        programmatic=record.get('programmatic', False),
+        programmatic=programmatic,
     )
 
 

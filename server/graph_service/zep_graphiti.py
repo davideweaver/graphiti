@@ -7,7 +7,7 @@ from graphiti_core import Graphiti  # type: ignore
 from graphiti_core.edges import EntityEdge  # type: ignore
 from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError, NodeNotFoundError
 from graphiti_core.llm_client import LLMClient  # type: ignore
-from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
+from graphiti_core.nodes import EntityNode, EpisodicNode, ProjectNode, SessionNode  # type: ignore
 
 from graph_service.config import Settings
 from graph_service.dto import EntityNodeResponse, FactResult
@@ -305,6 +305,169 @@ class ZepGraphiti(Graphiti):
             logger.info(f'Deleted entity: uuid={uuid}, name={entity_name}, group_id={group_id}')
         except NodeNotFoundError as e:
             raise HTTPException(status_code=404, detail=e.message) from e
+
+    async def delete_session(self, session_id: str, group_id: str):
+        """Delete a session and all its related episodes.
+
+        This will cascade-delete all episodes that belong to this session.
+        Emits WebSocket events for real-time updates.
+
+        Args:
+            session_id: Session ID to delete
+            group_id: Group ID for the session
+
+        Raises:
+            HTTPException: 404 if session not found
+        """
+        try:
+            # Get the session node to verify it exists
+            session = await SessionNode.get_by_session_id(self.driver, group_id, session_id)
+            session_uuid = session.uuid
+
+            # Get all episodes for this session before deleting
+            # This is needed for proper WebSocket event emission
+            query = """
+            MATCH (e:Episodic {group_id: $group_id, session_id: $session_id})
+            RETURN e.uuid as episode_uuid
+            """
+            records, _, _ = await self.driver.execute_query(query, group_id=group_id, session_id=session_id)
+            episode_uuids = [record['episode_uuid'] for record in records]
+
+            # Delete all episodes in this session
+            delete_episodes_query = """
+            MATCH (e:Episodic {group_id: $group_id, session_id: $session_id})
+            DETACH DELETE e
+            """
+            await self.driver.execute_query(delete_episodes_query, group_id=group_id, session_id=session_id)
+
+            # Delete the session node and all its relationships
+            delete_session_query = """
+            MATCH (s:Session {uuid: $uuid, group_id: $group_id})
+            DETACH DELETE s
+            """
+            await self.driver.execute_query(delete_session_query, uuid=session_uuid, group_id=group_id)
+
+            # Emit events for WebSocket notifications
+            event_bus = get_event_bus()
+
+            # Emit session deleted event
+            await event_bus.publish(
+                event_type='session.deleted',
+                group_id=group_id,
+                data={
+                    'session_id': session_id,
+                    'uuid': session_uuid,
+                    'episode_count': len(episode_uuids)
+                },
+            )
+
+            # Emit episode deleted events for each episode
+            # This ensures UI updates properly if episode list is open
+            for episode_uuid in episode_uuids:
+                await event_bus.publish(
+                    event_type='episode.deleted',
+                    group_id=group_id,
+                    data={'uuid': episode_uuid},
+                )
+
+            logger.info(f'Deleted session: session_id={session_id}, uuid={session_uuid}, group_id={group_id}, episodes={len(episode_uuids)}')
+        except NodeNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from e
+
+    async def delete_project(self, project_name: str, group_id: str):
+        """Delete a project and all its related sessions and episodes.
+
+        This will cascade-delete all sessions and episodes that belong to this project.
+        Emits WebSocket events for real-time updates.
+
+        Args:
+            project_name: Project name to delete
+            group_id: Group ID for the project
+
+        Raises:
+            HTTPException: 404 if project not found
+        """
+        try:
+            # Get the project node to verify it exists
+            project = await ProjectNode.get_by_name(self.driver, group_id, project_name)
+            project_uuid = project.uuid
+
+            # Get all sessions for this project before deleting
+            query = """
+            MATCH (s:Session {group_id: $group_id, project_name: $project_name})
+            RETURN s.session_id as session_id, s.uuid as session_uuid
+            """
+            records, _, _ = await self.driver.execute_query(query, group_id=group_id, project_name=project_name)
+            sessions = [{'session_id': record['session_id'], 'uuid': record['session_uuid']} for record in records]
+
+            # Get all episodes for this project
+            episode_query = """
+            MATCH (e:Episodic {group_id: $group_id, project_name: $project_name})
+            RETURN e.uuid as episode_uuid
+            """
+            episode_records, _, _ = await self.driver.execute_query(episode_query, group_id=group_id, project_name=project_name)
+            episode_uuids = [record['episode_uuid'] for record in episode_records]
+
+            # Delete all episodes in this project
+            delete_episodes_query = """
+            MATCH (e:Episodic {group_id: $group_id, project_name: $project_name})
+            DETACH DELETE e
+            """
+            await self.driver.execute_query(delete_episodes_query, group_id=group_id, project_name=project_name)
+
+            # Delete all sessions in this project
+            delete_sessions_query = """
+            MATCH (s:Session {group_id: $group_id, project_name: $project_name})
+            DETACH DELETE s
+            """
+            await self.driver.execute_query(delete_sessions_query, group_id=group_id, project_name=project_name)
+
+            # Delete the project node and all its relationships
+            delete_project_query = """
+            MATCH (p:Project {uuid: $uuid, group_id: $group_id})
+            DETACH DELETE p
+            """
+            await self.driver.execute_query(delete_project_query, uuid=project_uuid, group_id=group_id)
+
+            # Emit events for WebSocket notifications
+            event_bus = get_event_bus()
+
+            # Emit project deleted event
+            logger.info(f'Emitting project.deleted event: project_name={project_name}, uuid={project_uuid}')
+            await event_bus.publish(
+                event_type='project.deleted',
+                group_id=group_id,
+                data={
+                    'project_name': project_name,
+                    'uuid': project_uuid,
+                    'session_count': len(sessions),
+                    'episode_count': len(episode_uuids)
+                },
+            )
+            logger.info(f'Successfully emitted project.deleted event')
+
+            # Emit session deleted events for each session
+            for session in sessions:
+                await event_bus.publish(
+                    event_type='session.deleted',
+                    group_id=group_id,
+                    data={
+                        'session_id': session['session_id'],
+                        'uuid': session['uuid']
+                    },
+                )
+
+            # Emit episode deleted events for each episode
+            for episode_uuid in episode_uuids:
+                await event_bus.publish(
+                    event_type='episode.deleted',
+                    group_id=group_id,
+                    data={'uuid': episode_uuid},
+                )
+
+            logger.info(f'Deleted project: project_name={project_name}, uuid={project_uuid}, group_id={group_id}, sessions={len(sessions)}, episodes={len(episode_uuids)}')
+        except NodeNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Project not found: {project_name}") from e
 
     async def add_episode_with_events(self, **kwargs):
         """

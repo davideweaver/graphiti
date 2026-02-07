@@ -485,6 +485,56 @@ async def delete_entity(
     return Result(message='Entity deleted', success=True)
 
 
+@router.delete('/sessions/{group_id}/{session_id}', status_code=status.HTTP_200_OK)
+async def delete_session(
+    group_id: str,
+    session_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+):
+    """Delete a session and all its related episodes.
+
+    This will cascade-delete all episodes that belong to this session.
+    A WebSocket event will be emitted for real-time updates.
+
+    Args:
+        group_id: The group ID
+        session_id: Session ID to delete
+
+    Returns:
+        Success confirmation message
+
+    Raises:
+        HTTPException: 404 if session not found
+    """
+    await graphiti.delete_session(session_id, group_id)
+    return Result(message='Session deleted', success=True)
+
+
+@router.delete('/projects/{group_id}/{project_name}', status_code=status.HTTP_200_OK)
+async def delete_project(
+    group_id: str,
+    project_name: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+):
+    """Delete a project and all its related sessions and episodes.
+
+    This will cascade-delete all sessions and episodes that belong to this project.
+    WebSocket events will be emitted for real-time updates.
+
+    Args:
+        group_id: The group ID
+        project_name: Project name to delete
+
+    Returns:
+        Success confirmation message
+
+    Raises:
+        HTTPException: 404 if project not found
+    """
+    await graphiti.delete_project(project_name, group_id)
+    return Result(message='Project deleted', success=True)
+
+
 @router.post('/clear', status_code=status.HTTP_200_OK)
 async def clear(
     group_id: str,
