@@ -108,6 +108,7 @@ class SessionResponse(BaseModel):
     summary: str | None = None
     project_name: str | None = None
     first_episode_preview: str | None = None
+    programmatic: bool = False  # Whether this session is programmatic (automated) vs interactive
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}

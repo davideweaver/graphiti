@@ -735,6 +735,7 @@ async def get_fact_episodes(
                     MATCH (s:Session {session_id: $session_id, group_id: $group_id})
                     RETURN s.session_id AS session_id, s.uuid AS uuid,
                            s.summary AS summary,
+                           coalesce(s.programmatic, false) AS programmatic,
                            s.episode_count AS episode_count,
                            s.first_episode_date AS first_episode_date,
                            s.last_episode_date AS last_episode_date
@@ -750,6 +751,7 @@ async def get_fact_episodes(
                             'session_id': r['session_id'],
                             'uuid': r.get('uuid'),
                             'summary': r.get('summary'),
+                            'programmatic': r.get('programmatic', False),
                             'episode_count': r.get('episode_count', 0),
                             'first_episode_date': parse_db_date(r['first_episode_date'])
                             if r.get('first_episode_date')
@@ -1203,12 +1205,13 @@ async def list_sessions(
         WHERE first_ep.valid_at = first_episode_date
         WITH session_id, episode_count, first_episode_date, last_episode_date,
              source_descriptions, s.summary AS summary, s.uuid AS uuid,
+             coalesce(s.programmatic, false) AS programmatic,
              collect(DISTINCT p.name) AS project_names,
              head(collect(first_ep.content)) AS first_episode_content
         WHERE {session_where_query}
         RETURN session_id, uuid, episode_count, first_episode_date,
                last_episode_date, source_descriptions, summary,
-               project_names, first_episode_content
+               project_names, first_episode_content, programmatic
         ORDER BY last_episode_date {order_direction}
         SKIP $offset
         LIMIT $limit
@@ -1235,6 +1238,7 @@ async def list_sessions(
                 summary=record.get('summary'),
                 project_name=project_names[0] if project_names else None,
                 first_episode_preview=extract_preview(record.get('first_episode_content')),
+                programmatic=record.get('programmatic', False),
             )
         )
 
@@ -1330,6 +1334,7 @@ async def get_session(
         RETURN s.session_id AS session_id,
                s.uuid AS uuid,
                s.summary AS summary,
+               coalesce(s.programmatic, false) AS programmatic,
                s.episode_count AS episode_count,
                s.first_episode_date AS first_episode_date,
                s.last_episode_date AS last_episode_date,
@@ -1355,6 +1360,7 @@ async def get_session(
             RETURN s.session_id AS session_id,
                    s.uuid AS uuid,
                    s.summary AS summary,
+                   coalesce(s.programmatic, false) AS programmatic,
                    s.episode_count AS episode_count,
                    s.first_episode_date AS first_episode_date,
                    s.last_episode_date AS last_episode_date,
@@ -1392,6 +1398,7 @@ async def get_session(
         'session_id': session_data['session_id'],
         'uuid': session_data.get('uuid') or session_data['session_id'],  # Fallback to session_id if uuid is None
         'summary': session_data.get('summary'),
+        'programmatic': session_data.get('programmatic', False),
         'episode_count': session_data.get('episode_count', 0),
         'first_episode_date': parse_db_date(session_data['first_episode_date']) if session_data.get('first_episode_date') else None,
         'last_episode_date': parse_db_date(session_data['last_episode_date']) if session_data.get('last_episode_date') else None,
@@ -1700,6 +1707,7 @@ async def get_project_sessions(
              head(collect(first_ep.content)) AS first_episode_content
         RETURN s.session_id AS session_id,
                s.summary AS summary,
+               coalesce(s.programmatic, false) AS programmatic,
                episode_count,
                first_episode_date,
                last_episode_date,
@@ -1729,6 +1737,7 @@ async def get_project_sessions(
                 summary=record.get('summary'),
                 project_name=record.get('project_name'),
                 first_episode_preview=extract_preview(record.get('first_episode_content')),
+                programmatic=record.get('programmatic', False),
             )
         )
 
