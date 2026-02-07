@@ -701,6 +701,7 @@ class Graphiti:
         session_id: str | None = None,
         project_name: str | None = None,
         project_path: str | None = None,
+        programmatic: bool = False,
         group_id: str | None = None,
         uuid: str | None = None,
         update_communities: bool = False,
@@ -730,6 +731,10 @@ class Graphiti:
             The reference time for the episode.
         source : EpisodeType, optional
             The type of the episode. Defaults to EpisodeType.message.
+        programmatic : bool
+            Whether this session is programmatically-generated (automated, imported, background)
+            or human-interactive. Defaults to False. Only used when creating a new session;
+            ignored if session already exists.
         group_id : str | None
             An id for the graph partition the episode is a part of.
         uuid : str | None
@@ -844,6 +849,7 @@ class Graphiti:
                                 session_id=session_id,
                                 episode_time=reference_time,
                                 source_description=source_description,
+                                programmatic=programmatic,
                             )
 
                             # Update summary with new episode
@@ -1023,6 +1029,7 @@ class Graphiti:
                             session_id=session_id,
                             episode_time=reference_time,
                             source_description=source_description,
+                            programmatic=programmatic,
                         )
 
                         # Update summary with new episode

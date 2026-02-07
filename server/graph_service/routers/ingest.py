@@ -3,7 +3,7 @@ import logging
 from functools import partial
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
@@ -177,6 +177,7 @@ async def add_messages(
                 session_id=session_id,
                 project_name=project_name,
                 project_path=m.project_path,
+                programmatic=m.programmatic,
                 skip_extraction=request.skip_extraction,
                 entity_types=ENTITY_TYPES,
             )
@@ -412,6 +413,32 @@ async def delete_entity_edge(
 ):
     await graphiti.delete_entity_edge(uuid)
     return Result(message='Entity Edge deleted', success=True)
+
+
+@router.post('/group/{group_id}/backup', status_code=status.HTTP_200_OK)
+async def backup_group(
+    group_id: str,
+    graphiti: Annotated[ZepGraphiti, Depends(get_graphiti_from_path)],
+    target_group_id: str = Query(..., description='Target group ID for the backup'),
+):
+    """Create a backup of a graph with a new group_id.
+
+    This copies the entire FalkorDB database and updates all group_id properties
+    in the copied data to match the new database name.
+
+    Args:
+        group_id: The group ID to backup (source)
+        target_group_id: The new group ID for the backup
+
+    Returns:
+        Success message with backup statistics
+    """
+    stats = await graphiti.backup_group(group_id, target_group_id)
+    return {
+        'message': f'Backup created: {target_group_id}',
+        'success': True,
+        'stats': stats,
+    }
 
 
 @router.delete('/group/{group_id}', status_code=status.HTTP_200_OK)

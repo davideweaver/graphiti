@@ -345,7 +345,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
                 SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
-                source_descriptions: join([x IN coalesce($source_descriptions, []) | toString(x) ], '|'), created_at: $created_at}
+                source_descriptions: join([x IN coalesce($source_descriptions, []) | toString(x) ], '|'), created_at: $created_at, programmatic: $programmatic}
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.KUZU:
@@ -360,7 +360,8 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
                     n.first_episode_date = $first_episode_date,
                     n.last_episode_date = $last_episode_date,
                     n.source_descriptions = $source_descriptions,
-                    n.created_at = $created_at
+                    n.created_at = $created_at,
+                    n.programmatic = $programmatic
                 RETURN n.uuid AS uuid
             """
         case GraphProvider.FALKORDB:
@@ -368,7 +369,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
                 SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
-                source_descriptions: $source_descriptions, created_at: $created_at}
+                source_descriptions: $source_descriptions, created_at: $created_at, programmatic: $programmatic}
                 RETURN n.uuid AS uuid
             """
         case _:  # Neo4j
@@ -376,7 +377,7 @@ def get_session_node_save_query(provider: GraphProvider) -> str:
                 MERGE (n:Session {session_id: $session_id, group_id: $group_id})
                 SET n = {uuid: $uuid, session_id: $session_id, name: $name, group_id: $group_id, summary: $summary, intents: $intents,
                 episode_count: $episode_count, first_episode_date: $first_episode_date, last_episode_date: $last_episode_date,
-                source_descriptions: $source_descriptions, created_at: $created_at}
+                source_descriptions: $source_descriptions, created_at: $created_at, programmatic: $programmatic}
                 RETURN n.uuid AS uuid
             """
 
@@ -392,7 +393,8 @@ SESSION_NODE_RETURN = """
     s.episode_count AS episode_count,
     s.first_episode_date AS first_episode_date,
     s.last_episode_date AS last_episode_date,
-    s.source_descriptions AS source_descriptions
+    s.source_descriptions AS source_descriptions,
+    s.programmatic AS programmatic
 """
 
 SESSION_NODE_RETURN_NEPTUNE = """
@@ -406,7 +408,8 @@ SESSION_NODE_RETURN_NEPTUNE = """
     s.episode_count AS episode_count,
     s.first_episode_date AS first_episode_date,
     s.last_episode_date AS last_episode_date,
-    split(s.source_descriptions, "|") AS source_descriptions
+    split(s.source_descriptions, "|") AS source_descriptions,
+    s.programmatic AS programmatic
 """
 
 

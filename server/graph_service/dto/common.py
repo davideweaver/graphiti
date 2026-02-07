@@ -47,3 +47,7 @@ class Message(BaseModel):
     project_path: str | None = Field(
         default=None, description='The file system path of the project'
     )
+    programmatic: bool = Field(
+        default=False,
+        description='Whether this session is programmatically-generated (automated, imported, background) vs human-interactive',
+    )

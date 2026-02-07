@@ -90,6 +90,7 @@ async def get_or_create_session_node(
     session_id: str,
     episode_time: datetime,
     source_description: str | None = None,
+    programmatic: bool = False,
 ) -> SessionNode:
     """
     Get an existing SessionNode or create a new one.
@@ -106,6 +107,10 @@ async def get_or_create_session_node(
         The timestamp of the episode (used for first/last episode date)
     source_description : str | None
         The source description from the episode (optional)
+    programmatic : bool
+        Whether this session is programmatically-generated (automated, imported, background)
+        or human-interactive. Defaults to False. Only used when creating a new session;
+        ignored if session already exists.
 
     Returns
     -------
@@ -133,6 +138,7 @@ async def get_or_create_session_node(
         last_episode_date=episode_time,
         source_descriptions=source_descriptions,
         created_at=utc_now(),
+        programmatic=programmatic,
     )
 
     return new_session

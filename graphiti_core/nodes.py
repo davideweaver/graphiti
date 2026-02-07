@@ -723,6 +723,10 @@ class SessionNode(Node):
     source_descriptions: list[str] = Field(
         description='Unique source descriptions', default_factory=list
     )
+    programmatic: bool = Field(
+        default=False,
+        description='Whether this session is programmatically-generated (automated, imported, background) or human-interactive',
+    )
 
     async def save(self, driver: GraphDriver):
         session_data: dict[str, Any] = {
@@ -737,6 +741,7 @@ class SessionNode(Node):
             'last_episode_date': self.last_episode_date,
             'source_descriptions': self.source_descriptions,
             'created_at': self.created_at,
+            'programmatic': self.programmatic,
         }
 
         result = await driver.execute_query(
@@ -1114,6 +1119,7 @@ def get_session_node_from_record(record: Any) -> SessionNode:
         first_episode_date=first_episode_date,
         last_episode_date=last_episode_date,
         source_descriptions=source_descriptions,
+        programmatic=record.get('programmatic', False),
     )
 
 
